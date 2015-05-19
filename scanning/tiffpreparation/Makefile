@@ -9,11 +9,19 @@ help:
 clean:
 	rm -r *.o *~
 
+SOURCES=analysetiff.c analysescan.c
+OBJECTS=$(SOURCES:%.c=%.o)
+
+
 RESULTDIR=results
 
 compiletiff.%:
 	gcc -DHAVE_CONFIG_H  -I/usr/local/include   -g -O2 -Wall -W -MT $*.o -MD -MP -MF .deps/$*.Tpo -c -o $*.o $*.c
 	mv -f .deps/**.Tpo .deps/$*.Po
+	./libtool  --tag=CC   --mode=link gcc  -g -O2 -Wall -W   -o $* $*.o /usr/local/lib/libtiff.la -lz 
+	gcc -g -O2 -Wall -W -o $* $*.o  /usr/local/lib/libtiff.dylib  -lz
+
+otoexe.%:
 	./libtool  --tag=CC   --mode=link gcc  -g -O2 -Wall -W   -o $* $*.o /usr/local/lib/libtiff.la -lz 
 	gcc -g -O2 -Wall -W -o $* $*.o  /usr/local/lib/libtiff.dylib  -lz
 
@@ -27,11 +35,25 @@ TIFF1=$(HOME)/DeskTop/13trorig/img010.tif
 
 TIFFSOURCEDIR1=corrected13tr
 ANALYSETIFF=analysetiff
-$(ANALYSETIFF):	$(ANALYSETIFF).c
-	$(MAKE) compiletiff.$(ANALYSETIFF)
+%.o:	%.c
+	rm -f $(ANALYSETIFF)
+	gcc -DHAVE_CONFIG_H  -I/usr/local/include   -g -O2 -Wall -W -MT $*.o -MD -MP -MF .deps/$*.Tpo -c -o $*.o $*.c
 
 
+$(ANALYSETIFF):	$(OBJECTS) 
+	make otoexe.$(ANALYSETIFF)
+	./libtool  --tag=CC   --mode=link gcc  -g -O2 -Wall -W   -o $(ANALYSETIFF) $(OBJECTS) /usr/local/lib/libtiff.la -lz 
+	gcc -g -O2 -Wall -W -o $(ANALYSETIFF) $(OBJECTS)  /usr/local/lib/libtiff.dylib  -lz
+
+
+l:
+	splint +skip-sys-headers +boolint +matchanyintegral analysetiff.c
+
+TIFFFILE2=kin.tiff
 TIFFFILE1=img016_r
+a:
+	$(MAKE) $(ANALYSETIFF)
+	./$(ANALYSETIFF) -t kin.tif
 analyse:
 	$(MAKE) analyse.$(TIFFFILE1)
 
