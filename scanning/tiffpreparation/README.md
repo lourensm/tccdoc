@@ -24,3 +24,7 @@ consistently.
 
 I am now exploring the possibility of detecting connected blobs in the
 image.
+
+# Status
+
+The project is unfinished.

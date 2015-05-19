@@ -10,6 +10,7 @@ clean:
 	rm -r *.o *~
 
 SOURCES=analysetiff.c analysescan.c
+INCLUDES=analysescan.h
 OBJECTS=$(SOURCES:%.c=%.o)
 
 
@@ -41,7 +42,6 @@ ANALYSETIFF=analysetiff
 
 
 $(ANALYSETIFF):	$(OBJECTS) 
-	make otoexe.$(ANALYSETIFF)
 	./libtool  --tag=CC   --mode=link gcc  -g -O2 -Wall -W   -o $(ANALYSETIFF) $(OBJECTS) /usr/local/lib/libtiff.la -lz 
 	gcc -g -O2 -Wall -W -o $(ANALYSETIFF) $(OBJECTS)  /usr/local/lib/libtiff.dylib  -lz
 
