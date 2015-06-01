@@ -49,11 +49,21 @@ $(ANALYSETIFF):	$(OBJECTS)
 l:
 	splint +skip-sys-headers +boolint +matchanyintegral analysetiff.c
 
-TIFFFILE2=kin.tiff
+
 TIFFFILE1=img016_r
 a:
 	$(MAKE) $(ANALYSETIFF)
-	./$(ANALYSETIFF) -t kin.tif
+	./$(ANALYSETIFF) -t kin1.tif
+
+t:
+	$(MAKE) $(ANALYSETIFF)
+	./$(ANALYSETIFF) -t test1.tif
+
+s:
+	$(MAKE) $(ANALYSETIFF)
+	./$(ANALYSETIFF) -t square1.tif
+
+
 analyse:
 	$(MAKE) analyse.$(TIFFFILE1)
 

@@ -18,10 +18,32 @@
 # include "libport.h"
 #endif
 
+/*
+   TODO:
+    status?
+    on the way to making blobs accessible: e.g. iterator over (x,y) values
+    or sequential access to segments, or...
+
+    This requires that all cells are accessible from the blob.
+    A blob has a list of objects.
+    An object has a pointer to the list of cells.
+
+    After this, I would like code to determine end of blobs.
+
+
+accessibility probably not available for cell->object_next...
+in particular when one previous line segment is touched by multiple current_y
+
+
+Characterise the blobs on the page.
+
+Possibly: ignore parts of page and group other blobs per page part:
+left page, right page, left pageno, right pageno.
+ */
 
 #define ERROR_EXIT(MSG) error_exit(MSG, __FILE__, __LINE__)
 static void error_exit(const char* msg,const char* file, const int line) {
-	fprintf(stderr, "***%s:%d  : FATAL ERROR: \"%s\"\n",
+	fprintf(stdout, "***%s:%d  : FATAL ERROR: \"%s\"\n",
 		file, line, msg);
 	exit(EXIT_FAILURE);
 }
@@ -31,8 +53,18 @@ typedef struct lsegment {
 	int length;
 } LSegment;
 
+
+/*
+  How to link the LCell's belonging to one LObject? 
+At least there is one chain, up and down between LCells.
+
+Give LObject a pointer to first cell and to lastcell? No need to store y values?
+Or, only define an object_next pointer...
+NO NO NO: joining multiple objects...
+ */
 typedef struct lcell {
 	struct lcell *next;
+	struct lcell *object_next;
 	/*struct lcell *founder;*/ /* top left touching segment */
 	LSegment segment;
 	struct lobject* top_object;
@@ -54,6 +86,9 @@ typedef struct lblob {
 	struct lobject* objects;
 	LBox range;
 	int id;
+	struct lblob* next;
+	struct lblob* prev;
+	int open_object_count;
 } LBlob;
 
 typedef struct lobject {
@@ -61,17 +96,24 @@ typedef struct lobject {
 	struct lblob *origin;
 	int x;
 	int y;
+	LCell* top_cell;
 	struct lobject *blob_next; 
 } LObject;
 
 
 
-
+/*
+last_cell_last_new_object: 
+    we have just added a new cell connecting to last_cell_previous_line.
+    Could be within handle_segment, or between them.
+ */
 typedef struct lblobinfo {
 	LCell *last_cell_previous_line;
 	LCell *last_cell_current_line;
 	LObject* last_object;
 	LScanline* llines;
+	LObject* last_cell_last_new_object;
+	int currenty;
 } LBlobinfo;
 
 
@@ -82,7 +124,7 @@ typedef struct larea {
 	/*double y1f, tophorf, widthf, heightf;*/
 	LBox box;
 	void* data;
-	void (*handlesegment)(LSegment segment, int y, void* data);
+	void (*handlesegment)(int startx, int afterx, int y, void* data);
 
 	void (*handlepixel)(int x, int y, void* data);
 	void (*analyse)(void* data);
@@ -112,11 +154,7 @@ n = 0: offset = 0 for all x
 n = 1: offset = -1 for 
 
 
-00000000000000000000000000000000
--1-1-1                1 1 1 1 1 
 
-WRONG: is two dimensional array,
-(2*(rdata->lastpospos)+1) * (rdata->box.y2 - rdata->box.y1)
 
  */
 static void handlepixelrotationxy(int z, int z1, int z2, int  oz, double oz0, 
@@ -373,6 +411,16 @@ static void analysepixelrotationxy(const char* xory, const char* filespec,
 			       resultdir);
 }
 
+
+/*
+  Define 
+  - the _box_ in the tif that should be analysed,  
+  - the different angles that should be tried: between +- max_atan_angle,
+     - using 2*lastpospos + 1 equal spaced increments.
+  - the various analysisresults will be stored in files defined by filespec
+     - in a directory resultdir.
+  This specification is stored in a LArea datastructure. 
+*/
 static void setuppixelrotation(LArea* larea, const char* filespec, LBox box,
 			       double max_atan_angle, int lastpospos,
 			       const char*resultdir) {
@@ -380,6 +428,7 @@ static void setuppixelrotation(LArea* larea, const char* filespec, LBox box,
 	larea->box = box;
 	larea->data = (void*)setuppixelrotationdata(filespec, box, max_atan_angle, lastpospos, resultdir);
 	larea->handlepixel = &handlepixelrotation;
+	larea->handlesegment = NULL;
 	larea->analyse = &analysepixelrotation;
 	larea->handlesegment = NULL;
 }
@@ -449,6 +498,8 @@ static void printlbox(const char*txt, LBox box) {
 }
 
 
+/* ugly way of constructing strings in C, I am not really good nor interested in this aspect. Use a trick by storing result in one prealloccated static buffer.
+ */
 static const char* filespec(const char* filename) {
 	static const char* called = NULL;
 	static char value[80];
@@ -483,6 +534,22 @@ static const char* filespec(const char* filename) {
 }
 
 
+/* 
+blob determination per area detection? probably, no, probably yes:
+one area definition as set of rectangles.
+Each complete blob: handle per active area? Store with active area, criteria for 
+addition? 
+Can we simply detect end of blob? 
+*/
+/*
+Do the handlepixel per segment, call it segmentsize times.
+
+how to organize?
+sort per y -> permanently ignore after box passed.
+per line? possibly order all active_areas based on endx?
+Oh, the ordering of y should also be by lowest last-y 
+ */
+/*
 static void handle_active_areas_per_pixel(const int currentx, const int currenty,
 					  LActive_areas** active_areas_left) {
 	
@@ -502,7 +569,7 @@ static void handle_active_areas_per_pixel(const int currentx, const int currenty
 		}	
 	}
 }
-
+*/
 static LActive_areas* setupactionareas(const char* filename, int width, int height, const char*resultdir) {
 	/* two windows for now, detecting text and rotation */
 	/* first 1 window.. */
@@ -545,6 +612,7 @@ static int nextobject = 0;
 static LCell* new_lcell(int startx, int afterx) {
 	LCell* res1 = (LCell*)malloc(sizeof(LCell));
 	res1->next = NULL;
+	res1->object_next = NULL;
 	(res1->segment).min_x = startx;
 	(res1->segment).length = afterx - startx;
 	res1->top_object = NULL;
@@ -554,95 +622,42 @@ static LCell* new_lcell(int startx, int afterx) {
 
 
 
-/* TODO: link the origin blobs? */
-/* TODO: delete the other origin */
-static LObject* new_object(LCell* cell, int y) {
-	LObject* res;
-	LBlob* blob;
-	assert(cell->top_object == NULL);
-	res = (LObject*)malloc(sizeof(LObject));
-	res->id = nextobject;
-	nextobject++;
-	res->blob_next = NULL;
-	cell->top_object = res;
-	blob = (LBlob*)malloc(sizeof(LBlob));
-	lblobcount++;
-	res->y = y;
-	res->x = cell->segment.min_x;
-	res->origin = blob;
-	blob->objects = res;
-	
-	blob->range.x1 = cell->segment.min_x;
-	blob->range.x2 = cell->segment.min_x+cell->segment.length;
-	blob->range.y1 = y;
-	blob->range.y2 = y;
-	blob->id = nextblobid;
-	nextblobid++;
+static LBlob* last_lblob = NULL;
+static LBlob* first_lblob = NULL;
+int open_blobs = 0;
+
+static void blob_info(const char* where, int y) {
+	return;
+	printf("Blob Info at %s, y=%d\n", where, y);
+	printf("%d blobs, *%d open blobs\n", lblobcount, open_blobs);
+	LBlob* blobptr = first_lblob;
+	while(blobptr != NULL) {
+		printf("    id:%d x:[%d,%d] y:[%d,%d] openo:%d\n", blobptr->id,
+		       blobptr->range.x1, blobptr->range.x2,
+		       blobptr->range.y1, blobptr->range.y2,
+		       blobptr->open_object_count
+		       );
+		/*
+		printf("    id:%d x:[%d,l=%d), y:[%d, l=%d), open obj:%s\n", blobptr->id,
+		       blobptr->range.x1, blobptr->range.x2 - (blobptr->range.x1) + 1,
+		       blobptr->range.y1, blobptr->range.y2 - (blobptr->range.y1) + 1,
+		       blobptr->open_object_count
+		       );
+		*/
+		blobptr = blobptr->next;
+	}
+}
+
+
+static int lobject_length(LObject* first) {
+	int res = 0;
+	while (first != NULL) {
+		res++;
+		first = first->blob_next;
+	}
 	return res;
 }
-/* Handle new segment! */
-/*
-  distinguish new object from
-  add to object,
-  (startnewsegmentx, currentx) (not including)
 
-Maintain current_line last_cell
-
-multiple objects develop, their creation is ordered:
-those having smallest y are created earlier, those with lower x after that earlier.
-
-An object could be found to have to be merged with another object:
-but that is always an earlier object?
-Suppose we wish to have a hierarchy object->joined_next..
-we also need object->joined_prev, as we need to find the root.
-
-TOO HARD!!!!
-Additional indirection? Have the cell point to a pointer containing the object.
-So, all earlier segments point to the same address. And we can change its content in one 
-action.
-*p = other_object?
-real_object_ptr = 
-
-just give cell an ancestor cell pointer,
-and then adjust the object of this ancestor cell. 
-All descendants of an ancestor cell have NULL or invalid objects.
-The descendance does not depend on merging or not.
-
-The ancestor cell points to the current object.
-There is a linked list of topcells.
-
-handle_new_segment is incomplete!.
-TODO:
-make sure there is a link to the founder
-
-
-How to link merged objects?
-1) Leave the objects where they are, but link them together.
-   It will be hard then to determine whether two segments really belong to one object.
-   We could have objects contain topmost_ancestor objects.
-   and there should be an object->next list which traverses the merged objects in some
-   preferred way.
-2)Is adjusting all cells of to be merged cells an option?
-  Remove one of the objects afterwards?
-
-Aspects:
-How can we conveniently scan through our object?
-top down, left right?
-top down better, so top-left should be left.
-lowest y value.
-
-How to scan horizontally?
-- always possible by doing cell->next until? there is no guarantee.
-- find leftmost entry next line?
-
-OK, lets try, LObject reuse:
-as root info of each blob-top
-as pointer to the real defining object.
-That object should have pointers to all constituent objects, ordered in y, x-order.
-
-If we join objects/vertical-blobs that were not linked yet, we should not eat the "embedded"
-objects as they are separate, have space on top.
-*/
 static int cmp_object_yx(LObject* first, LObject* second) {
 	assert(first->y>=0);
 	assert(second->y>=0);
@@ -656,25 +671,6 @@ static int cmp_object_yx(LObject* first, LObject* second) {
 	return -1;
 }
 
-static void combine_replace_left_box(LBox *left, LBox* right) {
-	if (right->x1 < left->x1) left->x1 = right->x1;
-	if (right->x2 > left->x2) left->x2 = right->x2;
-	if (right->y1 < left->y1) left->y1 = right->y1;
-	if (right->y2 > left->y2) left->y2 = right->y2;
-}
-
-
-
-
-
-static int lobject_length(LObject* first) {
-	int res = 0;
-	while (first != NULL) {
-		res++;
-		first = first->blob_next;
-	}
-	return res;
-}
 /*
 1.No common objects allowed.
 2.Ensure that any unneeded allocated ListElements are freed
@@ -740,6 +736,139 @@ TODO: define primitives of next_left, next_right
 	}
 }
 
+/* TODO: standardize x ranges and then join combine_replace_left_box */
+static void add_segment_to_blob(int startx, int afterx, int y, LBlob* blob) {
+	if (startx < blob->range.x1) {
+		blob->range.x1 = startx;
+	}
+	if (afterx - 1 >  blob->range.x2) {
+		blob->range.x2 = afterx - 1;
+	}
+	if (y < blob->range.y1) {
+		blob->range.y1 = y;
+	}
+	if (y > blob->range.y2) {
+		blob->range.y2 = y;
+	}
+}
+
+/* TODO: link the origin blobs? */
+/* TODO: delete the other origin */
+static LObject* new_object(LCell* cell, int y, LBlob* blob) {
+	LObject* res;
+	assert(cell->top_object == NULL);
+	assert(cell->object_next == NULL);
+	res = (LObject*)malloc(sizeof(LObject));
+	res->id = nextobject;
+	nextobject++;
+	res->blob_next = NULL;
+	cell->top_object = res;
+	res->top_cell = cell;
+	if (blob == NULL) {
+		blob = (LBlob*)malloc(sizeof(LBlob));
+		lblobcount++;
+		blob->objects = res;
+		blob->open_object_count = 1;
+		blob->range.x1 = cell->segment.min_x;
+		blob->range.x2 = cell->segment.min_x+cell->segment.length - 1;
+		blob->range.y1 = y;
+		blob->range.y2 = y;
+		blob->id = nextblobid;
+		blob->prev = last_lblob;
+		blob->next = NULL;
+		open_blobs++;
+		if (last_lblob == NULL) {
+			first_lblob = blob;
+		} else {
+			assert(last_lblob->next == NULL);
+			last_lblob->next = blob;
+		}
+		last_lblob = blob;
+		nextblobid++;
+	} else {
+		add_segment_to_blob(cell->segment.min_x,
+				    cell->segment.min_x + cell->segment.length, y,
+				    blob);
+		/* Inefficient.. could define tail of objects */
+		blob->objects = merge_yx_lists(blob->objects, res, blob);
+		blob->open_object_count++;
+	}
+	res->y = y;
+	res->x = cell->segment.min_x;
+	res->origin = blob;
+
+	return res;
+}
+/* Handle new segment! */
+/*
+  distinguish new object from
+  add to object,
+  (startnewsegmentx, currentx) (not including)
+
+Maintain current_line last_cell
+
+multiple objects develop, their creation is ordered:
+those having smallest y are created earlier, those with lower x after that earlier.
+
+An object could be found to have to be merged with another object:
+but that is always an earlier object?
+Suppose we wish to have a hierarchy object->joined_next..
+we also need object->joined_prev, as we need to find the root.
+
+TOO HARD!!!!
+Additional indirection? Have the cell point to a pointer containing the object.
+So, all earlier segments point to the same address. And we can change its content in one 
+action.
+*p = other_object?
+real_object_ptr = 
+
+just give cell an ancestor cell pointer,
+and then adjust the object of this ancestor cell. 
+All descendants of an ancestor cell have NULL or invalid objects.
+The descendance does not depend on merging or not.
+
+The ancestor cell points to the current object.
+There is a linked list of topcells.
+
+handle_segment is incomplete!.
+TODO:
+make sure there is a link to the founder
+
+
+How to link merged objects?
+1) Leave the objects where they are, but link them together.
+   It will be hard then to determine whether two segments really belong to one object.
+   We could have objects contain topmost_ancestor objects.
+   and there should be an object->next list which traverses the merged objects in some
+   preferred way.
+2)Is adjusting all cells of to be merged cells an option?
+  Remove one of the objects afterwards?
+
+Aspects:
+How can we conveniently scan through our object?
+top down, left right?
+top down better, so top-left should be left.
+lowest y value.
+
+How to scan horizontally?
+- always possible by doing cell->next until? there is no guarantee.
+- find leftmost entry next line?
+
+OK, lets try, LObject reuse:
+as root info of each blob-top
+as pointer to the real defining object.
+That object should have pointers to all constituent objects, ordered in y, x-order.
+
+If we join objects/vertical-blobs that were not linked yet, we should not eat the "embedded"
+objects as they are separate, have space on top.
+*/
+
+static void combine_replace_left_box(LBox *left, LBox* right) {
+	if (right->x1 < left->x1) left->x1 = right->x1;
+	if (right->x2 > left->x2) left->x2 = right->x2;
+	if (right->y1 < left->y1) left->y1 = right->y1;
+	if (right->y2 > left->y2) left->y2 = right->y2;
+}
 
 
 
@@ -747,23 +876,67 @@ TODO: define primitives of next_left, next_right
 
 
 
+
+
+
+
+static void pre_test(LObject* left_top, const char*where, ...) {
+	return;
+	if (left_top->origin->open_object_count <= 0) {
+		printf("PRETEST:");
+		va_list args;
+		va_start(args, where);
+		vfprintf(stdout, where, args);
+		va_end(args);
+		printf("\n");
+		printf("oid:%d (x:%d,y:%d), lcellhasnext:%p, blobid:%d\n", left_top->id,
+		       left_top->x, left_top->y,
+		       left_top->top_cell->object_next,
+		       left_top->origin->id);
+		ERROR_EXIT("merge left object_count 0");
+	}
+}
 
 static void merge_top_objects_first(LObject* left_top, LObject* right_top) {
 	LBlob* toremove = right_top->origin;
 	assert(cmp_object_yx(left_top, right_top)<0);
+	int new_count = left_top->origin->open_object_count + right_top->origin->open_object_count-1;
 	left_top->origin->objects =
 		merge_yx_lists(left_top->origin->objects,
 			       right_top->origin->objects, left_top->origin);
 	combine_replace_left_box(&(left_top->origin->range), &(right_top->origin->range));
+	left_top->origin->open_object_count = new_count;
 	lblobcount--;
+	
+	if (toremove->next != NULL) {
+		toremove->next->prev = toremove->prev;
+	} else {
+		assert(toremove == last_lblob);
+		last_lblob = toremove->prev;
+	}
+	if (toremove->prev!= NULL) {
+		toremove->prev->next = toremove->next;
+	} else {
+		assert(toremove == first_lblob);
+		first_lblob = toremove->next;
+	}
+	open_blobs--;
 	free((void*)toremove);
 }
 /*
 Which blob to keep? The left-top most.
  */
+
 static void merge_top_objects(LObject* left_top, LObject* right_top) {
 	if (left_top->origin == right_top->origin) {
 		/* check for embedded/surrounded objects */
+		left_top->origin->open_object_count --;
+		if(left_top->origin->open_object_count <= 0) {
+			printf("ooc:%d, o1:%d o2:%d\n",
+			       left_top->origin->open_object_count,
+			       left_top->id, right_top->id);
+			ERROR_EXIT("merge open_object_count 0");;
+		}
 	} else {
 		if (cmp_object_yx(left_top, right_top)<0) {
 			merge_top_objects_first(left_top, right_top);
@@ -812,6 +985,7 @@ earlier: y=10
 "                                        ",
 "                                        "
 */
+/*
 static void printlineblobs(LCell *last_cell_previous_line) {
 	LCell* l = last_cell_previous_line;
 	while (l !=NULL) {
@@ -821,63 +995,448 @@ static void printlineblobs(LCell *last_cell_previous_line) {
 	}
 	printf("ENDprintlineblobs:\n");
 	
-}/*
+}
+*/
+/*
 TODO:
 if a previous_line_segment does not overlap, check whether there is still
 a connection. If not, close the object.
 
+
+What do I need to do with blobs?
+
+- Detect the pagenumber
+  
+- Use that to further improve the alignment of the page
+
+How to detect the pagenumber?
+- define the area where to look
+- find blobs there
+- calculate the contour of the blobs
+- match with other result of page alignment
+
+Detect blob in area:
+- check at end of blob
+- maintain datastructure for blobs which makes access easy: too complex, interesting, but too complex.
+
+So, check at end of blob or check each blob for overlap with all active_areas.
+
+INTERMEZZO:
+define rectangle of blob in rotated coordinate system, using the atan_angle.
+define rectangle of blobs in rotated coordinate system, using the atan_angle.
+
+
+Ok, store blobs, make them accessible at end.
+Make contour of blob accessible.
+
+Would be better if we store or handle blobs as soon as we know they are done?
+
+Put blobs in linked list... 
  */
 
-static void handle_new_segment(int startx, int afterx, int y, LBlobinfo* info) {
-	LCell* current_cell;
+static void analyse_blob(LBlob* blob) {
+}
+
+static void decrease_blob_object_count(LCell* cell, LBlobinfo* info) {
+	assert(cell->top_object->origin->open_object_count > 0);
+	cell->top_object->origin->open_object_count --;
+	if (cell->top_object->origin->open_object_count == 0) {
+		open_blobs--;
+	}
+}
+
+
+
+/*
+Invariant should depend on what we have handled of the current line.
+So, from current_line first cell to current_line before NOW,
+the open_object_counts should reflect the cells that are "active".
+Active cells:
+before handle_segment, after handle_segment:
+ 
+The y we are dealing with is the y of the current_cells.
+
+invariant open_object_count, before entry:
+
+current line, up to and including last_cell_current_line:
+add to open_object_count
+previous_line:
+starting from last_cell_previous_line, apart from last_cell_previous_line if
+last_cell_last_new_object is not NULL (that case is a bit tricky).
+
+ */
+typedef struct lblobtest {
+	LBlob* blob;
+	int open_segments;
+	LBox range;
+} LBlobtest;
+
+/* REALLY STUPID, should really have used a hashtable but lets ignore as this was only for debugging */
+#define BLOBN 80000
+
+static void print_blob_counts(LBlobtest* blobt, int currenty, int start_x, LBlob * suspect, const char* where) {
+	for (int i=0;i<BLOBN;i++) {
+		LBlob* blob = blobt[i].blob;
+		if (blob != NULL) {
+			if (blob->open_object_count != blobt[i].open_segments) {
+				printf("AT %s\n", where);
+				printf("blobid=%d, oc:%d, sc:%d, y(next):%d, startx:%d\n",
+				       blob->id, blob->open_object_count,
+				       blobt[i].open_segments, currenty, start_x);
+				if (suspect!=NULL) {
+					if (blob == suspect) {
+						ERROR_EXIT("suspect case invariant");
+					} else {
+						ERROR_EXIT("incomplete suspect case invariant");	
+					}
+				} else {
+					ERROR_EXIT("unexplained open_count mismatch");
+				}
+			}
+			
+		}
+	}
+	printf("TEST INVARIANT OK\n");
+}
+
+void print_cell(LCell* cell, LBlobtest* blobt, const char* sp, int first) {
+	int blobid = cell->top_object->origin->id;
+	char str[15];
+	const char* scount;
+	if (blobt[blobid].blob == NULL) {
+		scount = "N";
+	} else {
+		sprintf(str, "%d", blobt[blobid].open_segments);
+		scount = str;
+	}
+	if (first) printf("||");
+	printf("x:(%d,#%d), b:%d(%d,%s) %s",cell->segment.min_x,
+	       cell->segment.length, cell->top_object->origin->id,
+	       cell->top_object->origin->open_object_count,
+	       scount, sp
+	       );
+}
+/* before some currentx */
+void test_invariant_end(LBlobinfo* info) {
+	return;
+	assert(info->last_cell_last_new_object == NULL);
+	assert(info->last_cell_current_line == NULL);
+	assert((info->currenty == 0&&info->last_cell_previous_line ==NULL)||
+	       info->last_cell_previous_line ==
+			info->llines[info->currenty-1].first);
+	LBlobtest blobt[BLOBN];
+	int deb = 1;
+	if (deb) printf("INVARIANT END\n");
+	for (int i=0;i<BLOBN;i++) {
+		blobt[i].blob = NULL;
+		blobt[i].open_segments = 0;
+	}
+	LCell* cell = info->last_cell_previous_line;
 	int first = 1;
-	current_cell = new_lcell(startx, afterx);
+	while (cell != NULL) {
+		int id = cell->top_object->origin->id;
+		if (id < BLOBN) {
+			blobt[id].blob = cell->top_object->origin;
+			blobt[id].open_segments++;
+		} else {
+			ERROR_EXIT("cannot test more than BLOBN");
+		}
+		if (deb) print_cell(cell, blobt, "", first);
+		first = 0;
+		cell = cell->next;
+	}
+	print_blob_counts(blobt, info->currenty, -1, NULL, "test_invariant_end");
+}
+
+
+void test_invariant(LBlobinfo* info, int beforestartx, const char* where) {
+	return;
+	LBlobtest blobt[BLOBN];
+	for (int i=0;i<BLOBN;i++) {
+		blobt[i].blob = NULL;
+		blobt[i].open_segments = 0;
+	}
+	int deb = 1;
+	int first = 1;
+	LCell * cell1 = info->currenty == 0?NULL:
+		info->llines[((info->currenty) - 1)].first;
+	if (deb) printf("CHAIN:previous_line upto last_cell_previous_line:\n");
+	while (1) {
+		if (cell1 == NULL) break;
+		if (deb) print_cell(cell1, blobt, (cell1 == info->last_cell_previous_line&&
+						   info->last_cell_last_new_object !=NULL)?"NW":"  ",
+				    first);
+		first = 0;
+		if (cell1 == info->last_cell_previous_line) break;
+		cell1 = cell1->next;
+	}
+	LCell* cell = 
+		info->llines[(info->currenty)].first;
+	LBlob * suspect = NULL;
+	if (deb) printf("\nCHAIN:current_line:\n");
+	first = 1;
+	while (1) {
+		if (cell == NULL) break;
+		int id = cell->top_object->origin->id;
+		if (id < BLOBN) {
+			blobt[id].blob = cell->top_object->origin;
+			if (info->last_cell_last_new_object == NULL||
+			    cell != info->last_cell_current_line)  {			  
+				blobt[id].open_segments++;
+			} else {
+				assert(suspect == NULL);
+				suspect = info->last_cell_last_new_object->origin;
+			}
+		} else {
+			ERROR_EXIT("cannot test more than BLOBN");
+		}
+		if (deb) print_cell(cell, blobt, suspect!=NULL?"SS":"  ", first);
+		first = 0;
+		if (cell == info->last_cell_current_line) break;
+		cell = cell->next;
+	}
+	if (deb) {
+		if (cell1 == NULL||cell1->next == NULL) {
+			printf("\nCHAIN:NO previous_line NEXT");	
+		} else {
+			first = 1;
+			printf("\nCHAIN:previous_line NEXT:\n");
+			while (1) {
+				cell1 = cell1->next;
+				if (cell1 == NULL) break;
+				print_cell(cell1, blobt, "  ", first);
+				first = 0;
+			}
+		}
+	}
+	if (deb) printf("\nCHAIN:end\n");
+	print_blob_counts(blobt, info->currenty, beforestartx, suspect, where);
+	printf("TEST INVARIANT OK\n");
+}
+
+void test_all_open(LCell* first, const char* where, ...) {
+	return;
+	printf("All cells:\n");
+	while (first != NULL) {
+		printf("    x:(%d #%d), blobid=%d\n",first->segment.min_x,
+		       first->segment.length, first->top_object->origin->id);
+		if (first->top_object->origin->open_object_count <= 0) {
+			printf("test_all_open:");
+			va_list args;
+			va_start(args, where);
+			vfprintf(stdout, where, args);
+			va_end(args);
+			printf("\n");
+			ERROR_EXIT("some closed cell");
+		}
+		first = first->next;
+	}
+}
+/*
+Focus: long previous_line segment, multiple consecutive new_segments.
+Then, only the first new_cell should get to be linked directly, the others should 
+introduce new objects.
+
+We need to have info on how the last new_cell got linked to which last_cell_previous_line
+We have last_cell_previous_line, we need the new_cell-object to which it has most recently been 
+linked, NULL if not by last_cell_previous_line.
+
+If we now have to skip non overlapping, then last_object becomes NULL
+
+startx, afterx : the segment that needs to be incorporated into
+info:  LBlobinfo* info
+
+This implies that all segments should be part of a blob. They should be
+accessible from the blob.
+
+Segments are linked to a blob such that each segment is linked to parent
+segments, until some top_object. A blob then has a list of top_objects that
+make up its segments.
+
+With each blob we maintain an oben_object_counter so as to be able to detect when the blob
+is finished, i.e. all of its objects and segments no longer have a connection downwards.
+
+handle_segment_blobs links the current segments to segments of the previous line (currenty - 1)
+
+situations:
+*current segment is connected to no previous_line segment.
+* current segment is connected to exactly one previous_line segment which was not earlier
+connected to some current line segment.
+* multiple previous_line segments are connected to current_segment 
+
+info->last_cell_last_new_object :
+We just linked a current cell to a previousline cell, which is still available for linking to
+current cell. We need not decrease its blob->object_count as that has a link already through that
+current cell.
+ */
+static void handle_segment_blobs(int startx, int afterx, 
+				 LBlobinfo* info) {
+	int deb = 0;
+	int y = info->currenty;
+	if (deb) printf("HANDLESEGMENTBLOBS: x[%d,%d), y%d, lclno:%p\n", startx,
+	       afterx, y,
+	       info->last_cell_last_new_object);
+	blob_info("handle_segment start", y);
+	test_invariant(info, startx, "handle_segment_blobs");
+
+	int first = 1;
+	assert(info->last_cell_last_new_object == NULL ||
+			       info->last_cell_last_new_object->origin ==
+			       info->last_cell_previous_line->top_object->origin);
+	LCell* current_cell = new_lcell(startx, afterx);
+	if (deb) printf("lcpl:%p\n", info->last_cell_previous_line);
+	if (deb) pre_test(info->last_cell_previous_line->top_object, "NU");
 	if (info->last_cell_current_line == NULL) {
 		assert(info->llines[y].first == NULL);
+		assert(y==0||info->last_cell_previous_line == info->llines[y-1].first);
 		info->llines[y].first = current_cell;
+		info->last_cell_current_line = current_cell;
+		if (deb) printf("YY:%p, p:%p\n", info->llines[y].first, info->last_cell_previous_line);
 	} else {
 		info->last_cell_current_line->next = current_cell;
 	}
 	info->last_cell_current_line = current_cell;
+	/* skip non-overlapping segments previous line */
 	while (info->last_cell_previous_line != NULL &&
 	       startx >= info->last_cell_previous_line->segment.min_x +
 	       info->last_cell_previous_line->segment.length) {
+		if (info->last_cell_last_new_object == NULL) {
+			if (deb) printf("HSB:DECREASE blob=%d\n",
+			       info->last_cell_previous_line->top_object->origin->id);
+			decrease_blob_object_count(info->last_cell_previous_line, info);
+			if (info->last_cell_previous_line->next != NULL
+			    && info->last_cell_previous_line->next->top_object->origin ==
+			    info->last_cell_previous_line->top_object->origin)
+				{
+					assert(info->last_cell_previous_line->top_object->origin->open_object_count >= 1);
+				}
+		}
 		info->last_cell_previous_line =
 			info->last_cell_previous_line->next;
+		info->last_cell_last_new_object = NULL;
 	}
+
 	while (info->last_cell_previous_line!=NULL&&
-	       info->last_cell_previous_line->segment.min_x < afterx -1) {
-		if (first) {
+	       info->last_cell_previous_line->segment.min_x <= afterx - 1) {
+		pre_test(info->last_cell_previous_line->top_object, "begin");
+		if (first == 1) {  /* Need to assign new_cell to object */
 			assert(current_cell->top_object == NULL);
-			current_cell->top_object  =
-				info->last_cell_previous_line->top_object;
+			if (info->last_cell_last_new_object == NULL) {
+				/* link to existing object */
+				current_cell->top_object  =
+					info->last_cell_previous_line->top_object;
+				assert(info->last_cell_previous_line->object_next == NULL);
+				info->last_cell_previous_line->object_next = current_cell;
+				add_segment_to_blob(startx, afterx, y,
+						    current_cell->top_object->origin);
+				pre_test(current_cell->top_object, "first");
+				if (deb) printf("HSB:simple link blob=%d,c=%d, px=[%d,#%d)\n",
+				       current_cell->top_object->origin->id,
+				       current_cell->top_object->origin->open_object_count,
+				       info->last_cell_previous_line->segment.min_x,
+				       info->last_cell_previous_line->segment.length);
+			}  else {
+				assert(info->last_cell_last_new_object->origin ==
+				       info->last_cell_previous_line->top_object->origin);
+				/* we need to assign new object, but do merging with
+                                   info->last_cell_last_new_object
+				 */
+				info->last_object = new_object(current_cell, y, info->last_cell_last_new_object->origin);
+				/* so we create a new blob but it immediately gets merged */
+				if (deb) printf("HSB:link blob=%d, c=%d last_new, new_obj blob inc, px=[%d,#%d)\n",
+				       current_cell->top_object->origin->id,
+				       current_cell->top_object->origin->open_object_count,
+				       info->last_cell_previous_line->segment.min_x,
+				       info->last_cell_previous_line->segment.length);
+			}
+			
 			first = 0;
 		} else {
+			int currentblobid = current_cell->top_object->origin->id;
+			int otherblobid = info->last_cell_previous_line->top_object->origin->id;
 			merge_top_objects(current_cell->top_object,
 					  info->last_cell_previous_line->top_object);
+			if (deb) printf("HSB:merge to blob=%d,count=%d, decrease blobs=(%d,%d), px=[%d,#%d)\n",
+			       current_cell->top_object->origin->id,
+			       current_cell->top_object->origin->open_object_count,
+			       currentblobid, otherblobid, info->last_cell_previous_line->segment.min_x,
+				       info->last_cell_previous_line->segment.length);
 		}
+		info->last_cell_last_new_object = current_cell->top_object;
+		assert(info->last_cell_last_new_object->origin ==
+				       info->last_cell_previous_line->top_object->origin);
 		if (info->last_cell_previous_line->segment.min_x+
-		    info->last_cell_previous_line->segment.length <=
-		    afterx -1) {
+		    info->last_cell_previous_line->segment.length <= afterx -1) {
 			info->last_cell_previous_line =
 				info->last_cell_previous_line->next;
+			info->last_cell_last_new_object = NULL;
 		} else {
 			assert(!first);
+			assert(info->last_cell_last_new_object == NULL ||
+			       info->last_cell_last_new_object->origin ==
+			       info->last_cell_previous_line->top_object->origin);
+			blob_info("handle_segment endlinked", y);
 			return;
 		}
 	}
 	if (first) {
-		/* NEW OBJECT  */
-		info->last_object = new_object(current_cell, y);
+		/* NEW OBJECT, no link to earlier segment  */
+		info->last_object = new_object(current_cell, y, NULL);
+		info->last_cell_last_new_object = NULL;
+		if (deb) printf("HSB:blob=%d, NEW\n", current_cell->top_object->origin->id);
+	}
+	blob_info("handle_segment endnew", y);
+}
+
+static void handle_segment_active_areas(int startx, int afterx, int y, LActive_areas** active_areas_left) {
+	while (*active_areas_left != NULL
+	       && (((*active_areas_left)->area).box. y2< y)) {
+		*active_areas_left = (*active_areas_left)-> next;
+	}
+	if (*active_areas_left != NULL && y>= ((*active_areas_left)->area).box.y1) {
+		LActive_areas* active_areas_now = (*active_areas_left);
+		LArea* area_left =  &(active_areas_now->area);
+		while (active_areas_now != NULL&& y<=area_left->box.y2) {
+			if (startx>=area_left->box.x1 && afterx<=area_left->box.x2) {
+				if (area_left->handlepixel != NULL) {
+					for (int x = startx;x < afterx;x++) {
+						area_left->handlepixel(x, y, area_left->data);
+					}
+				}
+				if (area_left->handlesegment != NULL) {
+					area_left->handlesegment(startx, afterx, y, area_left->data);
+				}
+			}
+			active_areas_now = active_areas_now->next;
+			area_left =  &(active_areas_now->area);
+		}	
 	}
 }
 
-void analysescan(const char * filename, TIFF* tif, const char* resultdir) {
+static void handle_segment(int startx, int afterx, int y, LActive_areas** active_areas_left, LBlobinfo* info) {
+	handle_segment_blobs(startx, afterx, info);
+	handle_segment_active_areas(startx, afterx, y, active_areas_left); 
+}
+
+
+
+LScanOptions* set_scan_options() {
+	LScanOptions* res = (LScanOptions*)malloc(sizeof(LScanOptions));
+	res->reverse_bits = 1;
+	return res;
+}
+
+
+/*
+ TShould we handle pixel based analysis and segment based differently?
+ */
+void analysescan(const char * filename, TIFF* tif, const char* resultdir,
+		 LScanOptions* options) {
 
 	uint32 imagelength, imagewidth;
-        uint32 row;
 	uint16 bitspersample;
 	tsize_t scanlinesize;
+	short interpretation;
         char* buf;
 	char * bufptr;
 	LActive_areas* active_areas;
@@ -885,14 +1444,25 @@ void analysescan(const char * filename, TIFF* tif, const char* resultdir) {
 	int hex = 0;
 	int bin = 0;
 	int currenty = 0;
+	int black_is_zero;
 	LScanline* llines;
 	LBlobinfo blobinfo;
 	TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &imagewidth);
 	TIFFGetField(tif, TIFFTAG_BITSPERSAMPLE, &bitspersample);
         TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &imagelength);
+	TIFFGetField(tif, TIFFTAG_PHOTOMETRIC, &interpretation);
+	if (interpretation == 0) {
+		black_is_zero = 0;
+	} else if (interpretation == 1) {
+		black_is_zero = 1;
+	} else {
+		black_is_zero = -1;
+		ERROR_EXIT("cannot handle some TIFFTAG_PHOTOMETRIC yet");
+	}
+	int invert_bits = black_is_zero?options->reverse_bits:! options->reverse_bits;
 	llines = (LScanline*)_TIFFmalloc(imagelength*sizeof (LScanline));
 	{
-		LBlobinfo blobinfo1 = {NULL, NULL, NULL, llines};
+		LBlobinfo blobinfo1 = {NULL, NULL, NULL, llines, NULL, currenty};
 		blobinfo = blobinfo1;
 	}
 	if (bitspersample != 1) {
@@ -904,65 +1474,75 @@ void analysescan(const char * filename, TIFF* tif, const char* resultdir) {
 	active_areas_left= active_areas;
 	scanlinesize = TIFFScanlineSize(tif);
         bufptr = buf = (char*)_TIFFmalloc(imagelength*sizeof (LScanline));
-
-	
-	{
-		unsigned int i;
-		for (i = 0; i < imagelength; i++) {
-			llines[i].y = i;
-			llines[i].first = NULL;
-		}
+	for (unsigned int i = 0; i < imagelength; i++) {
+		llines[i].y = i;
+		llines[i].first = NULL;
 	}
-        for (row = 0; row < imagelength; row++) {
+	int deb = 0;
+        for (uint32 row = 0; row < imagelength; row++) {
 		tsize_t charstodo = scanlinesize;
 		tsize_t bitstodo = imagewidth;
 		int currentx = 0;
 		int insegment = 0;
 		TIFFReadScanline(tif, buf, row, (tsample_t)0);
+		if (deb) printf("*********%d**********************************\n", currenty);
 		bufptr = buf;
-
 		while (charstodo > 0) {
 			unsigned char nextchar = *bufptr;
-
-			tsize_t bitstodochar = 8;
+			if (invert_bits) nextchar = ~(nextchar);
 			unsigned char mask = 128;
 			int startnewsegmentx;
 			bufptr++;
-			charstodo --;
-			
+			charstodo --;			
 			if (hex) printf("%02X ", nextchar);
-			while (bitstodochar > 0&&bitstodo > 0) {
+			while (mask != 0&&bitstodo > 0) {
 				if ((nextchar & mask) != 0) {
 					if (!insegment) {
 						startnewsegmentx = currentx;
 						insegment = 1;
 					}
 					if (bin) printf("x ");
-					handle_active_areas_per_pixel(currentx,
-								      currenty,
-								      &active_areas_left);
 				} else {
 					if (insegment) {
-						handle_new_segment(startnewsegmentx,
-								   currentx,
-								   currenty,
-								   &blobinfo);
+						handle_segment(startnewsegmentx,
+							       currentx, currenty,
+							       &active_areas_left,
+							       &blobinfo);
 						insegment = 0;
 					}
 					if (bin) printf("  ");
 				}
 				mask = (mask >> 1);
-				bitstodochar --;
 				bitstodo --;
 				currentx++;
 			}
 			
 		}
 		if (bin||hex) printf("|\n");
+		while (blobinfo.last_cell_previous_line!= NULL) {
+			if (blobinfo.last_cell_last_new_object == NULL) {
+				decrease_blob_object_count(blobinfo.last_cell_previous_line, &blobinfo);
+			} 
+			blobinfo.last_cell_previous_line =
+				blobinfo.last_cell_previous_line->next;
+			blobinfo.last_cell_last_new_object = NULL;
+		}
+		blobinfo.last_cell_last_new_object = NULL;
 		blobinfo.last_cell_current_line = NULL;
 		blobinfo.last_cell_previous_line =
 			blobinfo.llines[currenty].first;
+		test_all_open(blobinfo.last_cell_previous_line, "next_line");
 		currenty++;
+		blobinfo.currenty = currenty;
+		test_invariant_end(&blobinfo);
+
+	}
+	/* TODO:Handle open blobs, as if we have an additional 0s line: */
+	if (blobinfo.last_cell_previous_line != NULL) {
+		while (blobinfo.last_cell_previous_line != NULL) {
+			decrease_blob_object_count(blobinfo.last_cell_previous_line, &blobinfo);
+			blobinfo.last_cell_previous_line = blobinfo.last_cell_previous_line->next;
+		}
 	}
 	active_areas_left= active_areas;
 	while (active_areas_left != NULL) {
@@ -971,7 +1551,7 @@ void analysescan(const char * filename, TIFF* tif, const char* resultdir) {
 		}
 		active_areas_left = active_areas_left->next;
 	}
-	printf("Defined %d blobs\n", lblobcount);
+	printf("Defined %d blobs (%d blobs still open)\n", lblobcount, open_blobs);
 	_TIFFfree(buf);
 	printf("------------------------------\n");
         /*TIFFClose(tif);*/

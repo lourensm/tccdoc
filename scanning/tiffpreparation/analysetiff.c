@@ -84,6 +84,7 @@ PrivateErrorHandler(const char* module, const char* fmt, va_list ap)
 }
 
 
+static LScanOptions* scan_options = NULL;
 
 int
 main(int argc, char* argv[])
@@ -162,6 +163,7 @@ main(int argc, char* argv[])
 
 	old_error_handler = TIFFSetErrorHandler(PrivateErrorHandler);
 
+	scan_options = set_scan_options();
 	multiplefiles = (argc - optind > 1);
 	for (; optind < argc; optind++) {
 		const char* filename = argv[optind];
@@ -479,13 +481,12 @@ TIFFReadRawData(TIFF* tif, int bitrev)
 static void
 tiffinfo(const char * filename, TIFF* tif, uint16 order, long flags, int is_image)
 {
-	
 	TIFFPrintDirectory(tif, stdout, flags);
 	if (!is_image) return;
 	if (!readdata)
 		return;
 	if (doanalyse) {
-		analysescan(filename, tif, resultdir);
+		analysescan(filename, tif, resultdir, scan_options);
 	}
 	if (rawdata) {
 		if (order) {
