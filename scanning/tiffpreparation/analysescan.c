@@ -120,13 +120,16 @@ It is the object belonging to the last_cell_previous_line that has been linked t
 last_cell_current_line.
 linked_cell_obj?
 
+last_cell_previous_line     -> lastcell_prevline
+last_cell_current_line      -> lastcell_currline
+last_cell_last_new_object   -> lastcell_newobj
  */
 typedef struct lblobinfo {
-	LCell *last_cell_previous_line;
-	LCell *last_cell_current_line;
+	LCell *lastcell_prevline;
+	LCell *lastcell_currline;
 	LObject* last_object;
 	LScanline* llines;
-	LObject* last_cell_last_new_object;
+	LObject* lastcell_newobj;
 	int currenty;
 	int lblobcount;
 	int nextblobid;
@@ -900,9 +903,9 @@ Then, only the first new_cell should get to be linked directly, the others shoul
 introduce new objects.
 
 We need to have info on how the last new_cell got linked to which 
-last_cell_previous_line
-We have last_cell_previous_line, we need the new_cell-object to which it has most 
-recently been linked, NULL if not by last_cell_previous_line.
+lastcell_prevline
+We have lastcell_prevline, we need the new_cell-object to which it has most 
+recently been linked, NULL if not by lastcell_prevline.
 
 If we now have to skip non overlapping, then last_object becomes NULL
 
@@ -928,14 +931,14 @@ situations:
 connected to some current line segment.
 * multiple previous_line segments are connected to current_segment 
 
-info->last_cell_last_new_object :
+info->lastcell_newobj :
 We just linked a current cell to a previousline cell, which is still available for linking to
 current cell. We need not decrease its blob->object_count as that has a link already through that
 current cell.
 at entry:
-assert(info->last_cell_last_new_object == NULL ||
-			       info->last_cell_last_new_object->origin ==
-			       info->last_cell_previous_line->top_object->origin);
+assert(info->lastcell_newobj == NULL ||
+			       info->lastcell_newobj->origin ==
+			       info->lastcell_prevline->top_object->origin);
  */
 static void handle_segment_blobs(int startx, int afterx, LBlobinfo* info) {
 
@@ -943,72 +946,59 @@ static void handle_segment_blobs(int startx, int afterx, LBlobinfo* info) {
 	int first = 1;
 	
 	LCell* current_cell = new_lcell(startx, afterx);
-	if (info->last_cell_current_line == NULL) {
-		assert(info->llines[y].first == NULL);
-		assert(y==0||info->last_cell_previous_line == info->llines[y-1].first);
+	if (info->lastcell_currline == NULL) {
 		info->llines[y].first = current_cell;
-		info->last_cell_current_line = current_cell;
+		info->lastcell_currline = current_cell;
 	} else {
-		info->last_cell_current_line->next = current_cell;
+		info->lastcell_currline->next = current_cell;
 	}
-	info->last_cell_current_line = current_cell;
+	info->lastcell_currline = current_cell;
 	/* skip non-overlapping segments previous line */
-	while (info->last_cell_previous_line != NULL &&
-	       startx >= info->last_cell_previous_line->segment.min_x +
-	       info->last_cell_previous_line->segment.length) {
-		if (info->last_cell_last_new_object == NULL) {
-			decrease_blob_object_count(info->last_cell_previous_line, info);
+	while (info->lastcell_prevline != NULL &&
+	       startx >= info->lastcell_prevline->segment.min_x +
+	       info->lastcell_prevline->segment.length) {
+		if (info->lastcell_newobj == NULL) {
+			decrease_blob_object_count(info->lastcell_prevline, info);
 		}
-		info->last_cell_previous_line =
-			info->last_cell_previous_line->next;
-		info->last_cell_last_new_object = NULL;
+		info->lastcell_prevline = info->lastcell_prevline->next;
+		info->lastcell_newobj = NULL;
 	}
 
-	while (info->last_cell_previous_line!=NULL&&
-	       info->last_cell_previous_line->segment.min_x <= afterx - 1) {
+	while (info->lastcell_prevline!=NULL&&
+	       info->lastcell_prevline->segment.min_x <= afterx - 1) {
 		if (first == 1) {  /* Need to assign new_cell to object */
-			assert(current_cell->top_object == NULL);
-			if (info->last_cell_last_new_object == NULL) {
+			if (info->lastcell_newobj == NULL) {
 				/* link to existing object */
 				current_cell->top_object  =
-					info->last_cell_previous_line->top_object;
-				assert(info->last_cell_previous_line->object_next == NULL);
-				info->last_cell_previous_line->object_next = current_cell;
+					info->lastcell_prevline->top_object;
+				assert(info->lastcell_prevline->object_next == NULL);
+				info->lastcell_prevline->object_next = current_cell;
 				add_segment_to_blob(startx, afterx, y,
 						    current_cell->top_object->origin);
 
 			}  else {
 				new_object(current_cell,
-					   info->last_cell_last_new_object->origin,
+					   info->lastcell_newobj->origin,
 					   info);
 			}
-			
 			first = 0;
 		} else {
 			merge_top_objects(current_cell->top_object,
-					  info->last_cell_previous_line->top_object,
+					  info->lastcell_prevline->top_object,
 					  info);
 		}
-		info->last_cell_last_new_object = current_cell->top_object;
-		assert(info->last_cell_last_new_object->origin ==
-				       info->last_cell_previous_line->top_object->origin);
-		if (info->last_cell_previous_line->segment.min_x+
-		    info->last_cell_previous_line->segment.length <= afterx -1) {
-			info->last_cell_previous_line =
-				info->last_cell_previous_line->next;
-			info->last_cell_last_new_object = NULL;
+		info->lastcell_newobj = current_cell->top_object;
+		if (info->lastcell_prevline->segment.min_x  <= afterx - 1) {
+			info->lastcell_prevline = info->lastcell_prevline->next;
+			info->lastcell_newobj = NULL;
 		} else {
-			assert(!first);
-			assert(info->last_cell_last_new_object == NULL ||
-			       info->last_cell_last_new_object->origin ==
-			       info->last_cell_previous_line->top_object->origin);
 			return;
 		}
 	}
 	if (first) {
 		/* NEW OBJECT, no link to earlier segment  */
 		new_object(current_cell, NULL, info);
-		info->last_cell_last_new_object = NULL;
+		info->lastcell_newobj = NULL;
 	}
 }
 
@@ -1135,27 +1125,27 @@ void analysescan(const char * filename, TIFF* tif, const char* resultdir,
 			
 		}
 		if (bin||hex) printf("|\n");
-		while (blobinfo.last_cell_previous_line!= NULL) {
-			if (blobinfo.last_cell_last_new_object == NULL) {
-				decrease_blob_object_count(blobinfo.last_cell_previous_line, &blobinfo);
+		while (blobinfo.lastcell_prevline!= NULL) {
+			if (blobinfo.lastcell_newobj == NULL) {
+				decrease_blob_object_count(blobinfo.lastcell_prevline, &blobinfo);
 			} 
-			blobinfo.last_cell_previous_line =
-				blobinfo.last_cell_previous_line->next;
-			blobinfo.last_cell_last_new_object = NULL;
+			blobinfo.lastcell_prevline =
+				blobinfo.lastcell_prevline->next;
+			blobinfo.lastcell_newobj = NULL;
 		}
-		blobinfo.last_cell_last_new_object = NULL;
-		blobinfo.last_cell_current_line = NULL;
-		blobinfo.last_cell_previous_line =
+		blobinfo.lastcell_newobj = NULL;
+		blobinfo.lastcell_currline = NULL;
+		blobinfo.lastcell_prevline =
 			blobinfo.llines[currenty].first;
 		currenty++;
 		blobinfo.currenty = currenty;
 
 	}
 	/* TODO:Handle open blobs, as if we have an additional 0s line: */
-	if (blobinfo.last_cell_previous_line != NULL) {
-		while (blobinfo.last_cell_previous_line != NULL) {
-			decrease_blob_object_count(blobinfo.last_cell_previous_line, &blobinfo);
-			blobinfo.last_cell_previous_line = blobinfo.last_cell_previous_line->next;
+	if (blobinfo.lastcell_prevline != NULL) {
+		while (blobinfo.lastcell_prevline != NULL) {
+			decrease_blob_object_count(blobinfo.lastcell_prevline, &blobinfo);
+			blobinfo.lastcell_prevline = blobinfo.lastcell_prevline->next;
 		}
 	}
 	active_areas_left= active_areas;
