@@ -2,6 +2,78 @@
 NON COMPILING OLD DEBUGGING FUNCTIONS CUT OUT OF analysescan.c
 #define BLOBN 80000
 
+/* DEBUGGING: kin.tif
+we have segment y=14, [24, 30) but should have 21 instead of 24...
+Th esegments are read incorrectly:
+for line y=14 we should have x:
+[4,6][8,11][15,17)[21,30)
+earlier: y=10
+[4,6)[15,16) instead of [16,17)  hex printout is correct!
+ 0                                        ",
+ 1                                        ",
+"                                        ",
+"                                        ",
+"                                        ",
+"                                        ",
+"                                        ",
+07    ..                                  ",
+      ..                                  ",
+      ..                                  ",
+10    ..         ..                       ",
+11    ..         ..                       ",
+12    ..                                  ",
+13    ..   ..    ..    .. ....            ",
+14    ..  ...    ..    .........          ",
+15    .. ...     ..    ....   ...         ",
+16    .....      ..    ...     ..         ",
+17    ....       ..    ..      ..         ",
+18    ....       ..    ..      ..         ",
+19    .....      ..    ..      ..         ",
+20    .. ...     ..    ..      ..         ",
+      ..  ...    ..    ..      ..         ",
+      ..   ...   ..    ..      ..         ",
+      ..    ..   ..    ..      ..         ",
+                                         ",
+"                                        ",
+"                                        ",
+"                                        ",
+"                                        ",
+"                                        "
+*/
+
+static void blob_info(const char* where, LBlobinfo* info) {
+	return;
+	int y = info->currenty;
+	printf("Blob Info at %s, y=%d\n", where, y);
+	printf("%d blobs, *%d open blobs\n", info->lblobcount, info->open_blobs);
+	LBlob* blobptr = info->first_lblob;
+	while(blobptr != NULL) {
+		printf("    id:%d x:[%d,%d] y:[%d,%d] openo:%d\n", blobptr->id,
+		       blobptr->range.x1, blobptr->range.x2,
+		       blobptr->range.y1, blobptr->range.y2,
+		       blobptr->open_object_count
+		       );
+		/*
+		printf("    id:%d x:[%d,l=%d), y:[%d, l=%d), open obj:%s\n", blobptr->id,
+		       blobptr->range.x1, blobptr->range.x2 - (blobptr->range.x1) + 1,
+		       blobptr->range.y1, blobptr->range.y2 - (blobptr->range.y1) + 1,
+		       blobptr->open_object_count
+		       );
+		*/
+		blobptr = blobptr->next;
+	}
+}
+
+static void printlineblobs(LCell *last_cell_previous_line) {
+	LCell* l = last_cell_previous_line;
+	while (l !=NULL) {
+		printf("s:[%d,l:%d] blobid:%d\n",l->segment.min_x, l->segment.length,
+		       l->top_object->origin->id);
+		l = l->next;
+	}
+	printf("ENDprintlineblobs:\n");
+	
+}
 
 static void pre_test(LObject* left_top, const char*where, ...) {
 	return;
