@@ -40,7 +40,10 @@ Characterise the blobs on the page.
 Possibly: ignore parts of page and group other blobs per page part:
 left page, right page, left pageno, right pageno.
 
-TODO: put all LBlob information in the LBlobinfo structure.
+TODO?
+- blobinfo in separate file? Probably not.
+- blobinfo in active_areas code?
+- blobinfo currenty??
  */
 
 #define ERROR_EXIT(MSG) error_exit(MSG, __FILE__, __LINE__)
@@ -945,14 +948,14 @@ static void handle_segment_blobs(int startx, int afterx, LBlobinfo* info) {
 	int y = info->currenty;
 	int first = 1;
 	
-	LCell* current_cell = new_lcell(startx, afterx);
+	LCell* newcell = new_lcell(startx, afterx);
 	if (info->lastcell_currline == NULL) {
-		info->llines[y].first = current_cell;
-		info->lastcell_currline = current_cell;
+		info->llines[y].first = newcell;
+		info->lastcell_currline = newcell;
 	} else {
-		info->lastcell_currline->next = current_cell;
+		info->lastcell_currline->next = newcell;
 	}
-	info->lastcell_currline = current_cell;
+	info->lastcell_currline = newcell;
 	/* skip non-overlapping segments previous line */
 	while (info->lastcell_prevline != NULL &&
 	       startx >= info->lastcell_prevline->segment.min_x +
@@ -964,40 +967,38 @@ static void handle_segment_blobs(int startx, int afterx, LBlobinfo* info) {
 		info->lastcell_newobj = NULL;
 	}
 
+	/* The condition of overlap subly different in while condition and return */
 	while (info->lastcell_prevline!=NULL&&
 	       info->lastcell_prevline->segment.min_x <= afterx - 1) {
 		if (first == 1) {  /* Need to assign new_cell to object */
 			if (info->lastcell_newobj == NULL) {
 				/* link to existing object */
-				current_cell->top_object  =
+				newcell->top_object  =
 					info->lastcell_prevline->top_object;
 				assert(info->lastcell_prevline->object_next == NULL);
-				info->lastcell_prevline->object_next = current_cell;
+				info->lastcell_prevline->object_next = newcell;
 				add_segment_to_blob(startx, afterx, y,
-						    current_cell->top_object->origin);
+						    newcell->top_object->origin);
 
 			}  else {
-				new_object(current_cell,
-					   info->lastcell_newobj->origin,
+				new_object(newcell,info->lastcell_newobj->origin,
 					   info);
 			}
 			first = 0;
 		} else {
-			merge_top_objects(current_cell->top_object,
+			merge_top_objects(newcell->top_object,
 					  info->lastcell_prevline->top_object,
 					  info);
 		}
-		info->lastcell_newobj = current_cell->top_object;
-		if (info->lastcell_prevline->segment.min_x  <= afterx - 1) {
+		info->lastcell_newobj = newcell->top_object;
+		if (info->lastcell_prevline->segment.min_x + info->lastcell_prevline->segment.length <= afterx - 1) {
 			info->lastcell_prevline = info->lastcell_prevline->next;
 			info->lastcell_newobj = NULL;
-		} else {
-			return;
-		}
+		} else return;
 	}
 	if (first) {
 		/* NEW OBJECT, no link to earlier segment  */
-		new_object(current_cell, NULL, info);
+		new_object(newcell, NULL, info);
 		info->lastcell_newobj = NULL;
 	}
 }
@@ -1005,7 +1006,7 @@ static void handle_segment_blobs(int startx, int afterx, LBlobinfo* info) {
 static void handle_segment_active_areas(int startx, int afterx, int y,
 					LActive_areas** active_areas_left) {
 	while (*active_areas_left != NULL
-	       && (((*active_areas_left)->area).box. y2< y)) {
+	       && (((*active_areas_left)->area).box.y2 < y)) {
 		*active_areas_left = (*active_areas_left)-> next;
 	}
 	if (*active_areas_left != NULL && y>= ((*active_areas_left)->area).box.y1) {
@@ -1015,11 +1016,13 @@ static void handle_segment_active_areas(int startx, int afterx, int y,
 			if (startx>=area_left->box.x1 && afterx<=area_left->box.x2) {
 				if (area_left->handlepixel != NULL) {
 					for (int x = startx;x < afterx;x++) {
-						area_left->handlepixel(x, y, area_left->data);
+						area_left->handlepixel(x, y,
+								     area_left->data);
 					}
 				}
 				if (area_left->handlesegment != NULL) {
-					area_left->handlesegment(startx, afterx, y, area_left->data);
+					area_left->handlesegment(startx, afterx,
+							  y, area_left->data);
 				}
 			}
 			active_areas_now = active_areas_now->next;
@@ -1042,6 +1045,29 @@ LScanOptions* set_scan_options() {
 }
 
 
+void blobinfo_endline(LBlobinfo *info, int nexty) {
+	while (info->lastcell_prevline!= NULL) {
+		if (info->lastcell_newobj == NULL) {
+			decrease_blob_object_count(info->lastcell_prevline, info);
+		} 
+		info->lastcell_prevline = info->lastcell_prevline->next;
+		info->lastcell_newobj = NULL;
+	}
+	info->lastcell_newobj = NULL;
+	info->lastcell_currline = NULL;
+	info->lastcell_prevline = info->llines[nexty-1].first;
+	info->currenty = nexty;
+}
+
+
+void blobinfo_endimage(LBlobinfo *info) {
+	if (info->lastcell_prevline != NULL) {
+		while (info->lastcell_prevline != NULL) {
+			decrease_blob_object_count(info->lastcell_prevline,info);
+			info->lastcell_prevline = info->lastcell_prevline->next;
+		}
+	}	
+}
 /*
  TShould we handle pixel based analysis and segment based differently?
  */
@@ -1059,21 +1085,16 @@ void analysescan(const char * filename, TIFF* tif, const char* resultdir,
 	int hex = 0;
 	int bin = 0;
 	int currenty = 0;
-	int black_is_zero;
-	LBlobinfo blobinfo;
+
 	TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &imagewidth);
 	TIFFGetField(tif, TIFFTAG_BITSPERSAMPLE, &bitspersample);
         TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &imagelength);
 	TIFFGetField(tif, TIFFTAG_PHOTOMETRIC, &interpretation);
-	if (interpretation == 0) {
-		black_is_zero = 0;
-	} else if (interpretation == 1) {
-		black_is_zero = 1;
-	} else {
-		black_is_zero = -1;
-		ERROR_EXIT("cannot handle some TIFFTAG_PHOTOMETRIC yet");
-	}
-	int invert_bits = black_is_zero?options->reverse_bits:! options->reverse_bits;
+	int invert_bits = 0;
+	if (interpretation == 0) invert_bits = ! options->reverse_bits;
+	else if (interpretation == 1) invert_bits = options->reverse_bits;
+	else ERROR_EXIT("cannot handle some TIFFTAG_PHOTOMETRIC yet");
+	LBlobinfo blobinfo;
 	init_lblobinfo(&blobinfo, imagelength);
 	if (bitspersample != 1) {
 		fprintf(stderr, "Sorry, only handle 1-bit samples.\n");
@@ -1084,14 +1105,13 @@ void analysescan(const char * filename, TIFF* tif, const char* resultdir,
 	active_areas_left= active_areas;
 	scanlinesize = TIFFScanlineSize(tif);
         bufptr = buf = (char*)_TIFFmalloc(imagelength*sizeof (LScanline));
-	int deb = 0;
+
         for (uint32 row = 0; row < imagelength; row++) {
 		tsize_t charstodo = scanlinesize;
 		tsize_t bitstodo = imagewidth;
 		int currentx = 0;
 		int insegment = 0;
 		TIFFReadScanline(tif, buf, row, (tsample_t)0);
-		if (deb) printf("*********%d**********************************\n", currenty);
 		bufptr = buf;
 		while (charstodo > 0) {
 			unsigned char nextchar = *bufptr;
@@ -1125,29 +1145,11 @@ void analysescan(const char * filename, TIFF* tif, const char* resultdir,
 			
 		}
 		if (bin||hex) printf("|\n");
-		while (blobinfo.lastcell_prevline!= NULL) {
-			if (blobinfo.lastcell_newobj == NULL) {
-				decrease_blob_object_count(blobinfo.lastcell_prevline, &blobinfo);
-			} 
-			blobinfo.lastcell_prevline =
-				blobinfo.lastcell_prevline->next;
-			blobinfo.lastcell_newobj = NULL;
-		}
-		blobinfo.lastcell_newobj = NULL;
-		blobinfo.lastcell_currline = NULL;
-		blobinfo.lastcell_prevline =
-			blobinfo.llines[currenty].first;
 		currenty++;
-		blobinfo.currenty = currenty;
+		blobinfo_endline(&blobinfo, currenty);
 
 	}
-	/* TODO:Handle open blobs, as if we have an additional 0s line: */
-	if (blobinfo.lastcell_prevline != NULL) {
-		while (blobinfo.lastcell_prevline != NULL) {
-			decrease_blob_object_count(blobinfo.lastcell_prevline, &blobinfo);
-			blobinfo.lastcell_prevline = blobinfo.lastcell_prevline->next;
-		}
-	}
+	blobinfo_endimage(&blobinfo);
 	active_areas_left= active_areas;
 	while (active_areas_left != NULL) {
 		if (active_areas_left->area.analyse != NULL) {
