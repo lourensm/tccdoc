@@ -9,8 +9,8 @@ help:
 clean:
 	rm -r *.o *~
 
-SOURCES=analysetiff.c analysescan.c
-INCLUDES=analysescan.h
+SOURCES=analysetiff.c analysescan.c lblobinfo.c
+INCLUDES=analysescan.h tiffcommon.h lblobinfo.h
 OBJECTS=$(SOURCES:%.c=%.o)
 
 
@@ -36,7 +36,7 @@ TIFF1=$(HOME)/DeskTop/13trorig/img010.tif
 
 TIFFSOURCEDIR1=corrected13tr
 ANALYSETIFF=analysetiff
-%.o:	%.c
+%.o:	%.c $(INCLUDES)
 	rm -f $(ANALYSETIFF)
 	gcc -DHAVE_CONFIG_H  -I/usr/local/include   -g -O2 -Wall -W -MT $*.o -MD -MP -MF .deps/$*.Tpo -c -o $*.o $*.c
 

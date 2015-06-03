@@ -28,7 +28,7 @@
  */
 
 /* TODO: separate file non TIFF stuff
-/* TODO: consistent structuring of segments and boxes: either x1, x2 or x,width  */
+* TODO: consistent structuring of segments and boxes: either x1, x2 or x,width  */
 /* TODO: remove copied functionality from tiffinfo.c */
 /* TODO: cleanup code */
 /* TODO: functionality for 13tr:
