@@ -9,8 +9,8 @@ help:
 clean:
 	rm -r *.o *~
 
-SOURCES=analysetiff.c analysescan.c lblobinfo.c
-INCLUDES=analysescan.h tiffcommon.h lblobinfo.h
+SOURCES=analysetiff.c analysescan.c lblobinfo.c pixelrotation.c
+INCLUDES=analysescan.h tiffcommon.h lblobinfo.h pixelrotation.h
 OBJECTS=$(SOURCES:%.c=%.o)
 
 

@@ -35,6 +35,7 @@
      - two pages
      - only detect blobs for pageno
 */
+#include "tiffcommon.h"
 #include "analysescan.h"
 #include <math.h>
 #include <stdio.h>
@@ -71,7 +72,7 @@ static int rawdata = 0;			/* show raw/decoded data */
 static int showwords = 0;		/* show data as bytes/words */
 static int readdata = 0;		/* read data in file */
 static int stoponerr = 1;		/* stop on first read error */
-static char* resultdir = "results";
+
 static	void usage(void);
 static	void tiffinfo(const char* filename, TIFF*, uint16, long, int);
 
@@ -486,7 +487,7 @@ tiffinfo(const char * filename, TIFF* tif, uint16 order, long flags, int is_imag
 	if (!readdata)
 		return;
 	if (doanalyse) {
-		analysescan(filename, tif, resultdir, scan_options);
+		analysescan(filename, tif, scan_options);
 	}
 	if (rawdata) {
 		if (order) {

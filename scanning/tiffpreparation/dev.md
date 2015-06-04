@@ -12,4 +12,21 @@
   * How to deal with the detected "blobs"?
 * Details: How to define "blob' actions?
   
-* Need to remove all kinds of debugging statements and functions.
+
+First split off rotation and position detection.
+
+We need to have blobs available for the rotation detection.
+So the setup of callbacks should be combined.
+In steps:
+
+* Encode the blob detection as an LArea based one.
+* Implies additional callbacks at end_of_line and end of image
+
+* Improve the list of LActiveAreas:
+allocation should be done by analysescan.c functionality.
+There should be a free_data callback called at end and the 
+LActiveArea elements should be freed in analysescan.c
+* separate out the pixelrotation functionality from activeareas.
+* make the activeAreas a local datatype?
+
+*Reason for complexity is that we wish to remove the activeareas cleanly.
