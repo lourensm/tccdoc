@@ -1,9 +1,6 @@
-
-
-/* GREAT! whole blob functionality hidden! */
-void setupblobarea(LArea* larea, LBox box, const char* where);
-
-
+void setuppageareas(LActive_areasPtr* la,
+		    const char* filename, int width, int height,
+			      LScanOptions* options);
 
 
 

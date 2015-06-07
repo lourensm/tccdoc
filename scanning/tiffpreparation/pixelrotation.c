@@ -9,7 +9,6 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-#include <libgen.h>
 
 #include "tiffcommon.h"
 #include "activearea.h"
@@ -145,6 +144,11 @@ static int* setupxyvalues(int z1, int z2, int lastpospos) {
 	return values;
 }
 
+static void   freepixelrotationdata(void* data) {
+	LPixelrotationdata* rdata = (LPixelrotationdata*)data;
+	free(rdata->yvalues);
+	free(rdata->xvalues);
+}
 
 static LPixelrotationdata* setuppixelrotationdata(const char* filespec, LBox box,
 						  double max_atan_angle,
@@ -308,7 +312,7 @@ static void analysepixelrotationxy(const char* xory, const char* filespec,
 	 */
 }
 
- static void   analysepixelrotation(void* data) {
+ void   analysepixelrotation(void* data) {
 	LPixelrotationdata* rdata = (LPixelrotationdata*)data;
 	const char* resultdir = rdata->resultdir;
 	analysepixelrotationxy("y", rdata->filespec,
@@ -331,7 +335,7 @@ static void analysepixelrotationxy(const char* xory, const char* filespec,
      - in a directory resultdir.
   This specification is stored in a LArea datastructure. 
 */
-static void setuppixelrotation(LArea* larea, const char* filespec, LBox box,
+void setuppixelrotation(LArea* larea, const char* filespec, LBox box,
 			       double max_atan_angle, int lastpospos,
 			       const char*resultdir) {
 	larea->next = NULL;
@@ -342,73 +346,16 @@ static void setuppixelrotation(LArea* larea, const char* filespec, LBox box,
 	larea->handlesegment = NULL;
 	larea->analyse = &analysepixelrotation;
 	larea->handlesegment = NULL;
+	larea->handle_endline = NULL;
+	larea->free = &freepixelrotationdata;
 }
 
 
-static void printlbox(const char*txt, LBox box) {
+/* wrong file, need some lboxutil file? */
+void printlbox(const char*txt, LBox box) {
 	printf("%s: x1:%d, y1:%d, x2:%d, y2:%d\n",
 	       txt, box.x1, box.y1, box.x2, box.y2);
 }
-
-
-/* ugly way of constructing strings in C, I am not really good nor interested in this aspect. Use a trick by storing result in one prealloccated static buffer.
- */
-static const char* filespec(const char* filename) {
-	static const char* called = NULL;
-	static char value[80];
-	assert(filename != NULL);
-	assert(strlen(filename)<80);
-	if (called == filename) return value;
-	for (size_t i=0; i<=strlen(filename); i++) {
-		value[i] = filename[i];
-	}
-	assert(called == NULL); /* allow one single call */
-	called = filename;
-	char* basename1 = basename(value);
-	const char* ext = ".tif";
-	size_t nl = strlen(basename1), el = strlen(ext);
-	if (nl < el || strcmp(basename1 + nl - el, ext)){
-		fprintf(stderr, "ERROR:expected .tif extension \"%s\"\n", filename);
-		exit(1);
-	}
-	for (size_t i = 0;i < nl - el; i++) {
-		value[i] = basename1[i];
-	}
-	value[nl - el] = '\0';
-	return value;
-}
-
-LActive_areas* setupactionareas(const char* filename, int width, int height,
-				       LScanOptions* options) {
-	const char* resultdir = options->resultdir;
-	/* two windows for now, detecting text and rotation */
-	/* first 1 window.. */
-	/*LHS: expected:Hor 23mm, 146mm vert:20mm 202mm
-          RHS: 183mm, 306mm
-	  (all HOR 332mm, vert:235)
-	  allow for rotation of box..first allow around center only
-	  latan (x - latan*(235)
-	  y - latan
-	 */
-	const char* filespec1 = filespec(filename);
-	double latan = 0.1;
-	double hor1 = 23, hor2 = 146, /*hor3 = 183, hor4 = 306,*/ horall = 332;
-	double vert1 = 20, vert2 = 202, vertall = 235;
-	/*double vertpageno = 213, vertpagenoh = 3;
-	  double pagel = 6;*//* 3 digits */
-	double scaleh = width/horall;
-	double scalev = height/vertall;
-	LBox boxl = {(int)round(scaleh*(hor1-latan*( (vert2-vert1)/2))),
-		     (int)round(scalev*(vert1 - latan*( (hor2-hor1)/2))),
-		     (int)round(scaleh*(hor2+latan*( (vert2-vert1)/2))),
-		     (int)round(scalev*(vert2 + latan*( (hor2-hor1)/2)))};
-	printlbox("Leftwindow", boxl);
-	LActive_areas* r2 = malloc(sizeof (LActive_areas));
-	r2->next = NULL;
-	setuppixelrotation(&(r2->area),filespec1, boxl, latan, 100, resultdir);
-	return r2;
-}
-
 
 
 

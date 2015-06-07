@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include "tiffcommon.h"
+#include "activearea.h"
 #include "lblobinfo.h"
 /* TODO:
     on the way to making blobs accessible: e.g. iterator over (x,y) values
@@ -105,27 +106,33 @@ typedef struct lblobinfo {
 	LBlob* last_lblob;
 	LBlob* first_lblob;
 	int open_blobs;
+        const char* description;
+	LBox box;
 } LBlobinfo;
 
-
-
-LBlobinfoPtr init_lblobinfo(int imagelength) {
+#undef DEBUGBLOB
+#ifdef DEBUGBLOB
+#include "analysescantests.c"
+#endif
+static LBlobinfo* init_lblobinfo(const char* description, LBox box) {
 	LScanline* llines;
-	llines = (LScanline*)malloc(imagelength*sizeof (LScanline));
-	LBlobinfoPtr res = (LBlobinfo*)malloc(sizeof(LBlobinfo));
+	assert(box.y1 == 0);
+	int ysize = box.y2-box.y1+1;
+	llines = (LScanline*)malloc(ysize*sizeof (LScanline));
+	LBlobinfo* res = (LBlobinfo*)malloc(sizeof(LBlobinfo));
 	LBlobinfo p = {NULL, NULL, NULL, llines, NULL, 0, 0, 0, 0,
-		       NULL, NULL, 0};
+		       NULL, NULL, 0, description, box};
 	*res = p;
-	for (int i = 0; i < imagelength; i++) {
-		llines[i].y = i;
+	for (int i = 0; i < ysize; i++) {
+		llines[i].y = i+box.y1;
 		llines[i].first = NULL;
 	}
 	return res;
 }
 
-void free_lblobinfo(LBlobinfoPtr info) {
-  free(info->llines);
-  free(info);
+void free_lblobinfo(LBlobinfo* info) {
+	free(info->llines);
+	free(info);
 }
 static LCell* new_lcell(int startx, int afterx) {
 	LCell* res1 = (LCell*)malloc(sizeof(LCell));
@@ -379,13 +386,6 @@ static void decrease_blob_object_count(LCell* cell, LBlobinfo* info) {
 
 
 
-
-typedef struct lblobtest {
-	LBlob* blob;
-	int open_segments;
-	LBox range;
-} LBlobtest;
-
 /*
 TODO: cleanup of documentation.
 Focus: long previous_line segment, multiple consecutive new_segments.
@@ -430,14 +430,14 @@ assert(info->lastcell_newobj == NULL ||
 			       info->lastcell_newobj->origin ==
 			       info->lastcell_prevline->top_object->origin);
  */
-void handle_segment_blobs(int startx, int afterx, LBlobinfoPtr info) {
+void handle_segment_blobs(int startx, int afterx, LBlobinfo* info) {
 
 	int y = info->currenty;
 	int first = 1;
 	
 	LCell* newcell = new_lcell(startx, afterx);
 	if (info->lastcell_currline == NULL) {
-		info->llines[y].first = newcell;
+		info->llines[y-info->box.y1].first = newcell;
 		info->lastcell_currline = newcell;
 	} else {
 		info->lastcell_currline->next = newcell;
@@ -489,20 +489,24 @@ void handle_segment_blobs(int startx, int afterx, LBlobinfoPtr info) {
 	}
 }
 
-void blobinfo_endline(LBlobinfoPtr info, int nexty) {
+void blobinfo_endline(LBlobinfo* info, int currenty) {
 	while (info->lastcell_prevline!= NULL) {
 		if (info->lastcell_newobj == NULL) {
-			decrease_blob_object_count(info->lastcell_prevline, info);
+			decrease_blob_object_count(info->lastcell_prevline,
+						   info);
 		} 
 		info->lastcell_prevline = info->lastcell_prevline->next;
 		info->lastcell_newobj = NULL;
 	}
 	info->lastcell_newobj = NULL;
 	info->lastcell_currline = NULL;
-	info->lastcell_prevline = info->llines[nexty-1].first;
-	info->currenty = nexty;
+	info->lastcell_prevline = info->llines[currenty-info->box.y1].first;
+	info->currenty = currenty+1;
+#ifdef DEBUGBLOB
+	test_invariant_end(info);
+#endif
 }
-void blobinfo_endimage(LBlobinfoPtr info) {
+void blobinfo_endimage(LBlobinfo* info) {
 	if (info->lastcell_prevline != NULL) {
 		while (info->lastcell_prevline != NULL) {
 			decrease_blob_object_count(info->lastcell_prevline,info);
@@ -512,7 +516,69 @@ void blobinfo_endimage(LBlobinfoPtr info) {
 }
 
 void blobinfo_stats(LBlobinfo* info) {
-  printf("Defined %d blobs (%d blobs still open)\n", info->lblobcount,
-	 info->open_blobs);
+	printf("Defined %d blobs (%d blobs still open)\n", info->lblobcount,
+	       info->open_blobs);
 }
 
+
+
+
+/* LAction_area stuff */
+
+
+
+
+
+
+void handleblobsegment(int startx, int afterx, int y, void* data) {
+	(void)y;
+	handle_segment_blobs(startx, afterx, (LBlobinfo*)data);
+}
+
+
+static void handleblobendline(int currenty, void* info) {
+	blobinfo_endline((LBlobinfo*)info, currenty);
+}
+
+static void analyseblob(void* data) {
+	blobinfo_endimage((LBlobinfo*)data);
+	blobinfo_stats((LBlobinfo*)data);
+}
+
+static void freeblob(void*data) {
+	free_lblobinfo((LBlobinfo*)data);
+}
+
+/* TODO: for now we handle only one blobspace... 
+ *     Somehow the segments are linked horizontally, do not really
+ *     understand my own code now.
+ */ 
+
+
+void setupblobarea(LArea* larea, LBox box, const char* where) {
+	static int called = 0;
+	if (called++ > 0) ERROR_EXIT("allow one blobspace for now");
+	larea->next = NULL;
+	larea->box = box;
+	larea->data = (void*)init_lblobinfo(where, box);
+	larea->handlepixel = NULL;
+	larea->handlesegment = &handleblobsegment;
+	larea->handle_endline = &handleblobendline;
+	larea->analyse = &analyseblob;
+	larea->free = &freeblob;
+	assert(larea->analyse != NULL);
+	assert(larea->data != NULL);
+}
+
+
+
+
+
+/* vim: set ts=8 sts=8 sw=8 noet: */
+/*
+ * Local Variables:
+ * mode: c
+ * c-basic-offset: 8
+ * fill-column: 78
+ * End:
+ */

@@ -1,5 +1,5 @@
+#include <stdarg.h>
 
-NON COMPILING OLD DEBUGGING FUNCTIONS CUT OUT OF analysescan.c
 #define BLOBN 80000
 
 /* DEBUGGING: kin.tif
@@ -40,6 +40,11 @@ earlier: y=10
 "                                        ",
 "                                        "
 */
+typedef struct lblobtest {
+	LBlob* blob;
+	int open_segments;
+	LBox range;
+} LBlobtest;
 
 static void blob_info(const char* where, LBlobinfo* info) {
 	return;
@@ -137,20 +142,19 @@ void print_cell(LCell* cell, LBlobtest* blobt, const char* sp, int first) {
 }
 
 void test_invariant_end(LBlobinfo* info) {
-	
-	assert(info->last_cell_last_new_object == NULL);
-	assert(info->last_cell_current_line == NULL);
-	assert((info->currenty == 0&&info->last_cell_previous_line ==NULL)||
-	       info->last_cell_previous_line ==
+	assert(info->lastcell_newobj == NULL);
+	assert(info->lastcell_currline == NULL);
+	assert((info->currenty == 0&&info->lastcell_prevline ==NULL)||
+	       info->lastcell_prevline ==
 			info->llines[info->currenty-1].first);
-	LBlobtest blobt[BLOBN];
+	static LBlobtest blobt[BLOBN];
 	int deb = 0;
-	if (deb) printf("INVARIANT END\n");
+	if (deb) printf("INVARIANT END:%d\n", info->currenty);
 	for (int i=0;i<BLOBN;i++) {
 		blobt[i].blob = NULL;
 		blobt[i].open_segments = 0;
 	}
-	LCell* cell = info->last_cell_previous_line;
+	LCell* cell = info->lastcell_prevline;
 	int first = 1;
 	while (cell != NULL) {
 		int id = cell->top_object->origin->id;
@@ -166,6 +170,16 @@ void test_invariant_end(LBlobinfo* info) {
 	}
 	print_blob_counts(blobt, info->currenty, -1, NULL, "test_invariant_end",
 			  deb);
+	LBlob* b = info->first_lblob;
+	while (b!= NULL) {
+		if (b->open_object_count != 0) {
+			if (blobt[b->id].blob == NULL) {
+				printf("y:%d\n", info->currenty);
+				ERROR_EXIT("open blob no open segment");
+			}
+		}
+		b = b->next;
+	}
 }
 
 
@@ -181,14 +195,14 @@ void test_invariant(LBlobinfo* info, int beforestartx, const char* where) {
 	int first = 1;
 	LCell * cell1 = info->currenty == 0?NULL:
 		info->llines[((info->currenty) - 1)].first;
-	if (deb) printf("CHAIN:previous_line upto last_cell_previous_line:\n");
+	if (deb) printf("CHAIN:previous_line upto lastcell_prevline:\n");
 	while (1) {
 		if (cell1 == NULL) break;
-		if (deb) print_cell(cell1, blobt, (cell1 == info->last_cell_previous_line&&
-						   info->last_cell_last_new_object !=NULL)?"NW":"  ",
+		if (deb) print_cell(cell1, blobt, (cell1 == info->lastcell_prevline&&
+						   info->lastcell_newobj !=NULL)?"NW":"  ",
 				    first);
 		first = 0;
-		if (cell1 == info->last_cell_previous_line) break;
+		if (cell1 == info->lastcell_prevline) break;
 		cell1 = cell1->next;
 	}
 	LCell* cell = 
@@ -201,19 +215,19 @@ void test_invariant(LBlobinfo* info, int beforestartx, const char* where) {
 		int id = cell->top_object->origin->id;
 		if (id < BLOBN) {
 			blobt[id].blob = cell->top_object->origin;
-			if (info->last_cell_last_new_object == NULL||
-			    cell != info->last_cell_current_line)  {			  
+			if (info->lastcell_newobj == NULL||
+			    cell != info->lastcell_currline)  {			  
 				blobt[id].open_segments++;
 			} else {
 				assert(suspect == NULL);
-				suspect = info->last_cell_last_new_object->origin;
+				suspect = info->lastcell_newobj->origin;
 			}
 		} else {
 			ERROR_EXIT("cannot test more than BLOBN");
 		}
 		if (deb) print_cell(cell, blobt, suspect!=NULL?"SS":"  ", first);
 		first = 0;
-		if (cell == info->last_cell_current_line) break;
+		if (cell == info->lastcell_currline) break;
 		cell = cell->next;
 	}
 	if (deb) {
@@ -254,3 +268,11 @@ void test_all_open(LCell* first, const char* where, ...) {
 		first = first->next;
 	}
 }
+/* vim: set ts=8 sts=8 sw=8 noet: */
+/*
+ * Local Variables:
+ * mode: c
+ * c-basic-offset: 8
+ * fill-column: 78
+ * End:
+ */

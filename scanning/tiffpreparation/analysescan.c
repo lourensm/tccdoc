@@ -16,9 +16,8 @@
 
 #include "tiffcommon.h"
 #include "analysescan.h"
-#include "lblobinfo.h"
 #include "activearea.h"
-#include "pixelrotation.h"
+#include "analysepage.h"
 /*
    Split off analysis functionality is really good!
 
@@ -83,41 +82,48 @@ typedef struct lxyvalues {
 
 
 
-
+typedef struct lactive_areas {
+	struct lactive_areas *next;
+	LArea area;
+} LActive_areas;
 
 /*
 Do the handlepixel per segment, call it segmentsize times.
  */
 
 
-
-
-
-static void handle_segment_active_areas(int startx, int afterx, int y,
-					LActive_areas** active_areas_left) {
-	while (*active_areas_left != NULL
-	       && (((*active_areas_left)->area).box.y2 < y)) {
-		*active_areas_left = (*active_areas_left)-> next;
+static void handle_endline(LActive_areasPtr active_areas_left, int currenty) {
+	while (active_areas_left != NULL) {
+		LArea* area =  &(active_areas_left->area);
+		if (currenty>= area->box.y1 && currenty<=area->box.y2) {
+			if (area->handle_endline != NULL) {
+				area->handle_endline(currenty, area->data);
+			}
+		}
+		active_areas_left = active_areas_left->next;
 	}
-	if (*active_areas_left != NULL && y>= ((*active_areas_left)->area).box.y1) {
-		LActive_areas* active_areas_now = (*active_areas_left);
-		LArea* area_left =  &(active_areas_now->area);
-		while (active_areas_now != NULL&& y<=area_left->box.y2) {
-			if (startx>=area_left->box.x1 && afterx<=area_left->box.x2) {
-				if (area_left->handlepixel != NULL) {
-					for (int x = startx;x < afterx;x++) {
-						area_left->handlepixel(x, y,
-								     area_left->data);
-					}
-				}
-				if (area_left->handlesegment != NULL) {
-					area_left->handlesegment(startx, afterx,
-							  y, area_left->data);
+}
+
+
+/* touching pixels are connected */
+static void handle_segment_active_areas(int startx, int afterx, int y,
+					LActive_areas* active_areas_left) {
+	while (active_areas_left != NULL) {
+		LArea* area =  &active_areas_left->area;
+		if (y >= area->box.y1 && y<=area->box.y2 && startx <= area->box.x2
+		    && afterx >= area->box.x1) {
+			int sx= (startx>= area->box.x1)?startx:area->box.x1;
+			int ax= (afterx <= area->box.x2)?afterx:area->box.x2 + 1;
+			if (area->handlepixel != NULL) {
+				for (int x = sx;x < ax;x++) {
+					area->handlepixel(x, y, area->data);
 				}
 			}
-			active_areas_now = active_areas_now->next;
-			area_left =  &(active_areas_now->area);
-		}	
+			if (area->handlesegment != NULL) {
+				area->handlesegment(sx, ax, y, area->data);
+			}
+		}
+		active_areas_left = active_areas_left->next;
 	}
 }
 
@@ -126,8 +132,7 @@ static void handle_segment_active_areas(int startx, int afterx, int y,
 
 
 
-static void handle_segment(int startx, int afterx, int y, LActive_areas** active_areas_left, LBlobinfoPtr info) {
-	handle_segment_blobs(startx, afterx, info);
+static void handle_segment(int startx, int afterx, int y, LActive_areas* active_areas_left) {
 	handle_segment_active_areas(startx, afterx, y, active_areas_left); 
 }
 
@@ -143,7 +148,16 @@ LScanOptions* set_scan_options() {
 
 
 
-
+LArea* add_active_area(LActive_areasPtr* la) {
+	LActive_areas* p = malloc(sizeof (LActive_areas));
+	p->next = NULL;
+	if (*la == NULL) {
+		*la = p;
+	} else {
+		(*la)->next = p;
+	}
+	return &(p->area);
+}
 
 /*
  TShould we handle pixel based analysis and segment based differently?
@@ -157,8 +171,7 @@ void analysescan(const char * filename, TIFF* tif,
 	short interpretation;
         unsigned char* buf;
 	unsigned char * bufptr;
-	LActive_areas* active_areas;
-	LActive_areas* active_areas_left;
+	LActive_areas* active_areas = NULL;
 	int hex = 0;
 	int bin = 0;
 	int currenty = 0;
@@ -171,14 +184,12 @@ void analysescan(const char * filename, TIFF* tif,
 	if (interpretation == 0) invert_bits = ! options->reverse_bits;
 	else if (interpretation == 1) invert_bits = options->reverse_bits;
 	else ERROR_EXIT("cannot handle some TIFFTAG_PHOTOMETRIC yet");
-	LBlobinfoPtr blobinfo = init_lblobinfo(imagelength);
 	if (bitspersample != 1) {
 		fprintf(stderr, "Sorry, only handle 1-bit samples.\n");
 		return;
 	}
-	active_areas = setupactionareas(filename, imagewidth, imagelength,
+	setuppageareas(&active_areas, filename, imagewidth, imagelength,
 					options);
-	active_areas_left= active_areas;
 	scanlinesize = TIFFScanlineSize(tif);
         bufptr = buf = (unsigned char*)_TIFFmalloc(imagelength*sizeof (unsigned char));
 
@@ -208,8 +219,7 @@ void analysescan(const char * filename, TIFF* tif,
 					if (insegment) {
 						handle_segment(startnewsegmentx,
 							       currentx, currenty,
-							       &active_areas_left,
-							       blobinfo);
+							       active_areas);
 						insegment = 0;
 					}
 					if (bin) printf("  ");
@@ -221,20 +231,25 @@ void analysescan(const char * filename, TIFF* tif,
 			
 		}
 		if (bin||hex) printf("|\n");
+		handle_endline(active_areas, currenty);
 		currenty++;
-		blobinfo_endline(blobinfo, currenty);
 
 	}
-	blobinfo_endimage(blobinfo);
-	active_areas_left= active_areas;
-	while (active_areas_left != NULL) {
-		if (active_areas_left->area.analyse != NULL) {
-			active_areas_left->area.analyse(active_areas_left->area.data);
+	LActive_areas* active_areas1 = active_areas;
+	while (active_areas1 != NULL) {
+		if (active_areas1->area.analyse != NULL) {
+			active_areas1->area.analyse(active_areas1->area.data);
 		}
-		active_areas_left = active_areas_left->next;
+		active_areas1 = active_areas1->next;
 	}
-	blobinfo_stats(blobinfo);
-	free_lblobinfo(blobinfo);
+	while (active_areas != NULL) {
+		if (active_areas->area.free != NULL) {
+			active_areas->area.free(active_areas->area.data);
+		}
+		LActive_areas * a1 = active_areas;
+		active_areas = active_areas->next;
+		free(a1);
+	}
 	_TIFFfree(buf);
 	printf("------------------------------\n");
         /*TIFFClose(tif);*/
