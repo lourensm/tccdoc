@@ -1,5 +1,7 @@
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <assert.h>
 #include "tiffcommon.h"
 #include "activearea.h"
@@ -99,7 +101,6 @@ typedef struct lblobinfo {
 	LObject* last_object;
 	LScanline* llines;
 	LObject* lastcell_newobj;
-	int currenty;
 	int lblobcount;
 	int nextblobid;
 	int nextobjectid;
@@ -116,11 +117,10 @@ typedef struct lblobinfo {
 #endif
 static LBlobinfo* init_lblobinfo(const char* description, LBox box) {
 	LScanline* llines;
-	assert(box.y1 == 0);
 	int ysize = box.y2-box.y1+1;
 	llines = (LScanline*)malloc(ysize*sizeof (LScanline));
 	LBlobinfo* res = (LBlobinfo*)malloc(sizeof(LBlobinfo));
-	LBlobinfo p = {NULL, NULL, NULL, llines, NULL, 0, 0, 0, 0,
+	LBlobinfo p = {NULL, NULL, NULL, llines, NULL, 0, 0, 0,
 		       NULL, NULL, 0, description, box};
 	*res = p;
 	for (int i = 0; i < ysize; i++) {
@@ -239,8 +239,7 @@ static void add_segment_to_blob(int startx, int afterx, int y, LBlob* blob) {
 	}
 }/* TODO: link the origin blobs? */
 /* TODO: delete the other origin */
-static void new_object(LCell* cell, LBlob* blob, LBlobinfo* info) {
-	int y = info->currenty;
+static void new_object(LCell* cell, LBlob* blob, int y, LBlobinfo* info) {
 	LObject* res;
 	assert(cell->top_object == NULL);
 	assert(cell->object_next == NULL);
@@ -296,11 +295,13 @@ static void merge_top_objects_first(LObject* left_top, LObject* right_top,
 				    LBlobinfo* info) {
 	LBlob* toremove = right_top->origin;
 	assert(cmp_object_yx(left_top, right_top)<0);
-	int new_count = left_top->origin->open_object_count + right_top->origin->open_object_count-1;
-	left_top->origin->objects =
-		merge_yx_lists(left_top->origin->objects,
-			       right_top->origin->objects, left_top->origin);
-	combine_replace_left_box(&(left_top->origin->range), &(right_top->origin->range));
+	int new_count = left_top->origin->open_object_count
+		      + right_top->origin->open_object_count-1;
+	left_top->origin->objects = merge_yx_lists(left_top->origin->objects,
+						   right_top->origin->objects,
+						   left_top->origin);
+	combine_replace_left_box(&(left_top->origin->range),
+				 &(right_top->origin->range));
 	left_top->origin->open_object_count = new_count;
 	info->lblobcount--;
 	
@@ -430,9 +431,7 @@ assert(info->lastcell_newobj == NULL ||
 			       info->lastcell_newobj->origin ==
 			       info->lastcell_prevline->top_object->origin);
  */
-void handle_segment_blobs(int startx, int afterx, LBlobinfo* info) {
-
-	int y = info->currenty;
+void handle_segment_blobs(int startx, int afterx, int y, LBlobinfo* info) {
 	int first = 1;
 	
 	LCell* newcell = new_lcell(startx, afterx);
@@ -466,7 +465,9 @@ void handle_segment_blobs(int startx, int afterx, LBlobinfo* info) {
 						    newcell->top_object->origin);
 
 			}  else {
-				new_object(newcell,info->lastcell_newobj->origin,
+				new_object(newcell,
+					   info->lastcell_newobj->origin,
+					   y, 
 					   info);
 			}
 			first = 0;
@@ -484,7 +485,7 @@ void handle_segment_blobs(int startx, int afterx, LBlobinfo* info) {
 	}
 	if (first) {
 		/* NEW OBJECT, no link to earlier segment  */
-		new_object(newcell, NULL, info);
+		new_object(newcell, NULL, y, info);
 		info->lastcell_newobj = NULL;
 	}
 }
@@ -501,7 +502,6 @@ void blobinfo_endline(LBlobinfo* info, int currenty) {
 	info->lastcell_newobj = NULL;
 	info->lastcell_currline = NULL;
 	info->lastcell_prevline = info->llines[currenty-info->box.y1].first;
-	info->currenty = currenty+1;
 #ifdef DEBUGBLOB
 	test_invariant_end(info);
 #endif
@@ -531,8 +531,7 @@ void blobinfo_stats(LBlobinfo* info) {
 
 
 void handleblobsegment(int startx, int afterx, int y, void* data) {
-	(void)y;
-	handle_segment_blobs(startx, afterx, (LBlobinfo*)data);
+	handle_segment_blobs(startx, afterx, y, (LBlobinfo*)data);
 }
 
 
@@ -556,8 +555,9 @@ static void freeblob(void*data) {
 
 
 void setupblobarea(LArea* larea, LBox box, const char* where) {
-	static int called = 0;
+	/*	static int called = 0;
 	if (called++ > 0) ERROR_EXIT("allow one blobspace for now");
+	*/
 	larea->next = NULL;
 	larea->box = box;
 	larea->data = (void*)init_lblobinfo(where, box);

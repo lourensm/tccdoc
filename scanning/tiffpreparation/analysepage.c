@@ -1,10 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <math.h>
 #include <assert.h>
 #include <libgen.h>
 #include <string.h>
 
+#include "tiffiop.h"
 #include "tiffcommon.h"
 #include "activearea.h"
 #include "pixelrotation.h"
@@ -24,7 +26,9 @@ detect pagenumbers, left/right.
 static void setboxfromranges(int width, double hor1, double hor2, double horall,
 			     int height, double vert1, double vert2,
 			     double vertall, LBox* box) {
-	double latan = 0.1; /* maximal expected misalignment angle */ 
+	double latan = 0.0; /* maximal expected misalignment angle */
+	/* TODO: this is wrong, the rotation is not within this box, but 
+           over a whole page */
 	double scaleh = width/horall;
 	double scalev = height/vertall;
 	LBox box1 = {(int)round(scaleh*(hor1-latan*( (vert2-vert1)/2))),
@@ -72,10 +76,24 @@ static const char* filespec(const char* filename, const char* add) {
 	return value;
 }
 
+typedef struct pagedata {
+	const char* filename;
+	TIFF* tif;
+	unsigned char* buf;
+	LScanOptions* options;
+	LArea* lefttext;
+	LArea* righttext;
+	LArea* blobs;
+	LArea* lpageno;
+	LArea* rpageno;
+} PageData;
 
+PageDataPtr setuppageareas(LActive_areasPtr* la, const char* filename,
+		    TIFF* tif, unsigned char* buf, LScanOptions* options) {
+	uint32 width, height;
 
-void setuppageareas(LActive_areasPtr* la, const char* filename,
-		    int width, int height, LScanOptions* options) {
+	TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &width);
+	TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &height);
 	const char* resultdir = options->resultdir;
 	/* two windows for now, detecting text and rotation */
 	/* first 1 window.. */
@@ -90,27 +108,69 @@ void setuppageareas(LActive_areasPtr* la, const char* filename,
 	double latan = 0.1;
 	double hor1 = 23, hor2 = 146, hor3 = 183, hor4 = 306, horall = 332;
 	double vert1 = 20, vert2 = 202, vertall = 235;
-	LBox boxl, boxr;
-	setboxfromranges(width, hor1, hor2, horall, height, vert1, vert2, vertall, &boxl);
-	setboxfromranges(width, hor3, hor4, horall, height, vert1, vert2, vertall, &boxr);
+	LBox boxl, boxr, boxlp, boxrp;
+
+	setboxfromranges(width, hor1, hor2, horall, height, vert1, vert2,
+			 vertall, &boxl);
+	setboxfromranges(width, hor3, hor4, horall, height, vert1, vert2,
+			 vertall, &boxr);
 	/*double vertpageno = 213, vertpagenoh = 3;
-	  double pagel = 6;*//* 3 digits */
+	  double pagel = 6;
+          hor 26, 30, 304, 308, 333.5
+          vert 212, 215/235.5
+         img012_r.tif big rotation +- 9
+         vert: 203, 224  hor 17, 39,   hor 295 313  / 333.5
+        *//* 3 digits */
+	double pl1 = 17.0, pl2 = 39.0, pr1 = 295.0, pr2 = 313.0, pv1 = 205.0, pv2 = 224.0,
+		pla = 333.5, pva = 235.5;
+	setboxfromranges(width, pl1, pl2, pla, height, pv1, pv2, pva, &boxlp);
+	setboxfromranges(width, pr1, pr2, pla, height, pv1, pv2, pva, &boxrp);	
 	printlbox("Leftwindow", boxl);
 	printlbox("Rightwindow", boxr);
-	LArea* p1 = add_active_area(la);
-	const char* filespec1 = filespec(filename, "_l");
-	setuppixelrotation(p1,filespec1, boxl, latan, 100, resultdir);
-	
-	LArea* p2 = add_active_area(la);
-	filespec1 = filespec(filename, "_r");
-	setuppixelrotation(p2,filespec1, boxr, latan, 100, resultdir);
-	p1->next = p2;
-	LArea* p3 = add_active_area(la);
-	LBox blobspace = {0, 0, width, height+10000};
-	printlbox("Blobarea", blobspace);
-	setupblobarea(p3, blobspace, "wholeimage");
+	printlbox("Leftpageno", boxlp);
+	printlbox("Rightpageno", boxrp);
+	int leftpage = 1, rightpage = 1, wholeblob = 0, leftpageblob = 1, rightpageblob = 1;
+	LArea* lefttext = 0;
+	if (leftpage) {
+		lefttext = add_active_area(la);
+		const char* filespec1 = filespec(filename, "_l");
+		setuppixelrotation(lefttext,filespec1, boxl, latan, 100, resultdir,
+				   "lefttext");
+	}
+	LArea* righttext = NULL;
+	if (rightpage) {
+		righttext = add_active_area(la);
+		const char* filespec1 = filespec(filename, "_r");
+		setuppixelrotation(righttext,filespec1, boxr, latan, 100, resultdir,
+				   "righttext");
+	}
+	LArea* blobarea = NULL;
+	if (wholeblob) {
+		blobarea = add_active_area(la);
+		LBox blobspace = {0, 0, width, height};
+		printlbox("Blobarea", blobspace);
+		setupblobarea(blobarea, blobspace, "wholeimage");
+	}
+	LArea* blobplarea = NULL;
+	if (leftpageblob) {
+		blobplarea = add_active_area(la);
+		setupblobarea(blobplarea, boxlp, "leftpageno");
+	}
+	LArea* blobprarea = NULL;
+	if (rightpageblob) {
+		blobprarea = add_active_area(la);
+		setupblobarea(blobprarea, boxrp, "rightpageno");
+	}
+	PageData pd = {filename, tif, buf, options, lefttext, righttext,
+		       blobarea, blobplarea, blobprarea};
+	PageData* result = malloc(sizeof(PageData));
+	*result = pd;
+	return result;
 }
 
+void pageanalysis(PageDataPtr data) {
+	free(data);
+}
 
 /* vim: set ts=8 sts=8 sw=8 noet: */
 /*

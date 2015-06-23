@@ -9,20 +9,22 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-
+#include <stdbool.h>
 #include "tiffcommon.h"
 #include "activearea.h"
 #include "pixelrotation.h"
 
 typedef struct lpixelrotationdata {
-  LBox box, maxbox;
-  double max_atan_angle;
-  int lastpospos;
-  int* xvalues;
-  int* yvalues;
-  double x0, y0;
-  const char * filespec;
-  const char* resultdir;
+	LBox box, maxbox;
+	double max_atan_angle;
+	int lastpospos;
+	int* xvalues;
+	int* yvalues;
+	double x0, y0;
+	const char * filespec;
+	const char* resultdir;
+	const char* description;
+	double x1, y1, x2, y2;
 } LPixelrotationdata;
 
 /*
@@ -84,20 +86,33 @@ Start from the middle of the range.
 Add pixel value to array y + offset
 n = 0: offset = 0 for all x
 n = 1: offset = -1 for 
+
+
+Within our rectangle of interest, defined by rdata->box:
+Maintain a count in x and y direction of the sum of the pixels int the 
+perpendicular direction.
+
+handlepixelrotationxy deals with pixel at coordinate value z (=x or y)
+between box extrema z1 and z2.
+
+If z is y direction and oz is x direction, we have offset in y direction.
+Then we have rotation relative to horizontal position.
+
  */
 static void handlepixelrotationxy(int z, int z1, int z2, int  oz, double oz0, 
 			   int* xyvalues,
 			   int lastpospos, double max_atan_angle) {
 	int n;
+	assert(z >= z1);
+	assert(z <= z2);
 	for (n = -lastpospos;n <= lastpospos;n++) {
-		int zz0 = z +
+		int zz0 = z - z1 +
 			(int)floor(0.5+(oz - oz0)*n*max_atan_angle/lastpospos);
-		int z0d = zz0 - z1;
-		if (z0d >=0 && z0d < z2 - z1 + 1) {
-			int index = n+lastpospos+ (2*lastpospos+1)*z0d;
+		if (zz0 >=0 && zz0 < z2 - z1 + 1) {
+			int index = n+lastpospos+ (2*lastpospos+1)*zz0;
 			assert(index >= 0);
 			assert(index < (z2 -z1 +1)*(2*lastpospos+1));
-			xyvalues[n+lastpospos+ (2*lastpospos+1)*z0d]++;
+			xyvalues[index]++;
 		}
 	}
 }
@@ -117,6 +132,10 @@ static void updatemaxbox(int x, int y, LBox* maxbox) {
 	}
 }
 
+
+/*
+yvalues:  f(y) = sum x of pixel(x,y)
+ */
 static void handlepixelrotation(int x, int y, void* data) {
 	LPixelrotationdata* rdata = (LPixelrotationdata*)data;
 	int lastpospos = rdata->lastpospos;
@@ -128,8 +147,9 @@ static void handlepixelrotation(int x, int y, void* data) {
 	handlepixelrotationxy(y, (rdata->box).y1, (rdata->box).y2,
 			      x, rdata->x0, rdata->yvalues,
 			      lastpospos, rdata->max_atan_angle);
-	handlepixelrotationxy(x, (rdata->box).x1, (rdata->box).x2, y, rdata->y0, 
-			      rdata->xvalues, lastpospos, rdata->max_atan_angle);
+	handlepixelrotationxy(x, (rdata->box).x1, (rdata->box).x2, y,
+			      rdata->y0, rdata->xvalues, lastpospos,
+			      rdata->max_atan_angle);
 }
 
 static int* setupxyvalues(int z1, int z2, int lastpospos) {
@@ -150,10 +170,12 @@ static void   freepixelrotationdata(void* data) {
 	free(rdata->xvalues);
 }
 
+
 static LPixelrotationdata* setuppixelrotationdata(const char* filespec, LBox box,
 						  double max_atan_angle,
 						  int lastpospos,
-						  const char*resultdir) {
+						  const char*resultdir,
+						  const char * description) {
 	LPixelrotationdata* data = malloc(sizeof (LPixelrotationdata));
 	data->yvalues = setupxyvalues(box.y1, box.y2, lastpospos);
 	data->xvalues = setupxyvalues(box.x1, box.x2, lastpospos);
@@ -168,7 +190,7 @@ static LPixelrotationdata* setuppixelrotationdata(const char* filespec, LBox box
 	data->y0 = (box.y2 + box.y1)/2;
 	data->filespec = filespec;
 	data->resultdir = resultdir;
-
+	data->description = description;
 	return data;
 }
 
@@ -185,11 +207,19 @@ static int max_cmp(const void* a, const void* b) {
 	return a1->pos - b1->pos;
 }
 
-static void analysepixelrotationxy(const char* xory, const char* filespec,
-				   int lastpospos,
-				   int z1, int z2, int* xyvalues,
-				   const char* resultdir) {
-	const int sbufsize = 80;
+
+typedef struct lrotresult {
+	double zlow, zhi;
+	double atanrotation;
+} LRotresult;
+static void analysepixelrotationxy(const char* xory,
+				   int z1, int z2,
+				   int* xyvalues, LPixelrotationdata* rdata,
+				   LRotresult* result) {
+	const char* filespec   = rdata->filespec;
+	int         lastpospos = rdata->lastpospos;
+	const char* resultdir  = rdata->resultdir;
+	const int   sbufsize   = 80;
 	char filename[sbufsize];
 	int possize;
 	double* max2;
@@ -215,7 +245,7 @@ static void analysepixelrotationxy(const char* xory, const char* filespec,
 		 filespec, xory);
 	f = fopen(filename, "w");	
 	for (int z = 0; z < z2 - z1 +1; z++) {
-		fprintf(f, "%d", z);
+		fprintf(f, "%d", z + z1);
 		for (int i1 = 0;i1 < possize; i1++) {
 			int count = xyvalues[i1 + possize*z];
 			double c2;
@@ -250,10 +280,11 @@ static void analysepixelrotationxy(const char* xory, const char* filespec,
 	int posindex;
 	double m1,m2,m3,p1,p2,p3,p0;
 	int pl,ph,sl,sh, yl, yh;
-	printf("Analysis of %s direction\n", xory);
+	printf("Analysis of \"%s\":  %s direction\n", rdata->description, xory);
 	qsort(maxes, 5, sizeof(struct lcontpt), max_cmp);
 	for (int i = 0;i<5;i++) {
-		if (maxes[i].pos == mpos) {printf("*");posindex = i;} else {printf(" ");}
+		if (maxes[i].pos == mpos) {printf("*");posindex = i;}
+		else {printf(" ");}
 		printf("i:%d, p:%d, m:%f\n", i, maxes[i].pos, maxes[i].max);
 	}
 	if (posindex<=0||posindex>=4) {
@@ -276,7 +307,10 @@ static void analysepixelrotationxy(const char* xory, const char* filespec,
 	yl = 0;yh = 0;
 	/* require at least 12 consecutive nonzeros 
 	   if as much consecutive 0s after 
+           Detect border of rectangle, if we assume rotation of (pl,ph)
+           Awkward ad hoc detection.
 	*/
+        
 	for (int yy = 0; yy <  z2 - z1 +1; yy++) {
 		int countl = xyvalues[pl + possize*yy];
 		int counth = xyvalues[ph + possize*yy];
@@ -291,7 +325,6 @@ static void analysepixelrotationxy(const char* xory, const char* filespec,
 	int ylow = yl + (yh - yl)*(p0 - pl)/(ph-pl);
 	sl = 0;
 	sh = 0;
-
 	for (int yy = z2 - z1 ; yy >= 0;yy--) {
 		int countl = xyvalues[pl + possize*yy];
 		int counth = xyvalues[ph + possize*yy];
@@ -302,27 +335,46 @@ static void analysepixelrotationxy(const char* xory, const char* filespec,
 		if (sl>10 && sh >10) break;
 	}
 	int yhi = yl + (yh - yl)*(p0 - pl)/(ph-pl);
-	printf("zl:%d, zh:%d\n", yl, yh);
-	printf("maxp:%f, zlow:%d, zhi:%d\n", p0, ylow, yhi);
+	printf("(zl:%d, zh:%d)\n", yl + z1, yh + z1);
+	printf("maxp:%f, %slow:%d, %shi:%d\n", p0, xory, z1 + ylow, xory,z1 + yhi);
+	printf("        box:[%d, %d]\n", z1, z2);
 	/* TODO:
            detect digits of pageno, put font box around them and that defines the
 	   x position, and absolute window in case of 13tr, if we know maximum dimensions 
 	   of text.
            Requires detection of blobs. and indexing, recognition.
+           ylow, yhi
 	 */
+	result->zlow = ylow + z1;
+	result->zhi = yhi + z1;
+	result->atanrotation = (p0- 100.0)*rdata->max_atan_angle/lastpospos;
 }
 
  void   analysepixelrotation(void* data) {
 	LPixelrotationdata* rdata = (LPixelrotationdata*)data;
-	const char* resultdir = rdata->resultdir;
-	analysepixelrotationxy("y", rdata->filespec,
-			       rdata->lastpospos,
-			       (rdata->box).y1, (rdata->box).y2, rdata->yvalues,
-			       resultdir);
-	analysepixelrotationxy("x", rdata->filespec,
-			       rdata->lastpospos,
-			       (rdata->box).x1, (rdata->box).x2, rdata->xvalues,
-			       resultdir);
+	LBox * box = &(rdata->box);
+	LRotresult xr, yr;
+	analysepixelrotationxy("y", box->y1, box->y2, rdata->yvalues,rdata,
+			       &yr);
+	analysepixelrotationxy("x", box->x1, box->x2, rdata->xvalues, rdata,
+			       &xr);
+	double ylow = yr.zlow;
+	double xlow = xr.zlow;
+	double alpha = yr.atanrotation;
+	double y = box->y2 - box->y1;
+	double x = box->x2 - box->x1;
+
+	rdata->x1 = (xlow + alpha*(y/2 - ylow + alpha*x/2))/(1 + alpha*alpha);
+	rdata->y1 = ylow  - alpha*(x/2 - rdata->x1);
+	printf("alpha:%lf, xlow:%lf, ylow:%lf\n", alpha, xlow, ylow);
+	printf("x1, y1:%lf,%lf\n", rdata->x1, rdata->y1);
+
+	double yhi = yr.zhi;
+	double xhi = xr.zhi;
+	rdata->x2 = (xhi + alpha*(y/2 - yhi + alpha*x/2))/(1 + alpha*alpha);
+	rdata->y2 = yhi  - alpha*(x/2 - rdata->x2);
+	printf("xhi:%lf, yhi:%lf\n", xhi, yhi);
+	printf("x2, y2:%lf,%lf\n", rdata->x2, rdata->y2);
 }
 
 
@@ -337,11 +389,13 @@ static void analysepixelrotationxy(const char* xory, const char* filespec,
 */
 void setuppixelrotation(LArea* larea, const char* filespec, LBox box,
 			       double max_atan_angle, int lastpospos,
-			       const char*resultdir) {
-	larea->next = NULL;
+			const char*resultdir,
+			const char* description) {
 	larea->box = box;
-	larea->data = (void*)setuppixelrotationdata(filespec, box, max_atan_angle,
-						    lastpospos, resultdir);
+	larea->data = (void*)setuppixelrotationdata(filespec, box,
+						    max_atan_angle,
+						    lastpospos, resultdir,
+						    description);
 	larea->handlepixel = &handlepixelrotation;
 	larea->handlesegment = NULL;
 	larea->analyse = &analysepixelrotation;

@@ -1,6 +1,6 @@
 void setuppixelrotation(LArea* area, const char* filespec, LBox box,
 			double max_atan_angle, int lastpospos,
-			const char*resultdir);
+			const char*resultdir, const char * description);
 
 /* TODO:should be in lboxutil */
 void printlbox(const char*txt, LBox box);

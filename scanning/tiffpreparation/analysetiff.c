@@ -28,21 +28,20 @@
  */
 
 /* TODO: separate file non TIFF stuff
-* TODO: consistent structuring of segments and boxes: either x1, x2 or x,width  */
-/* TODO: remove copied functionality from tiffinfo.c */
-/* TODO: cleanup code */
-/* TODO: functionality for 13tr:
+ * TODO: consistent structuring of segments and boxes: either x1, x2 or x,width 
+ * TODO: remove copied functionality from tiffinfo.c 
+ *  
+ * TODO: cleanup code 
+ * TODO: functionality for 13tr:
      - two pages
      - only detect blobs for pageno
-*/
-#include "tiffcommon.h"
-#include "analysescan.h"
+ */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <libgen.h>
-
+#include <stdbool.h>
 #ifdef HAVE_STRINGS_H
 # include <strings.h>
 #endif
@@ -54,6 +53,11 @@
 #ifdef NEED_LIBPORT
 # include "libport.h"
 #endif
+
+#include "tiffcommon.h"
+#include "analysescan.h"
+
+
 
 
 
@@ -479,8 +483,8 @@ TIFFReadRawData(TIFF* tif, int bitrev)
 
 
 
-static void
-tiffinfo(const char * filename, TIFF* tif, uint16 order, long flags, int is_image)
+static void tiffinfo(const char * filename, TIFF* tif, uint16 order,
+		     long flags, int is_image)
 {
 	TIFFPrintDirectory(tif, stdout, flags);
 	if (!is_image) return;

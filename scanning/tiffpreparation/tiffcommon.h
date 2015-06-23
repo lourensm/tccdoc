@@ -5,6 +5,8 @@ void error_exit(const char* msg,const char* file, const int line);
 typedef struct lscanoptions {
 	int reverse_bits;
 	const char* resultdir;
+        bool hexall;
+        bool binall;
 } LScanOptions;
 
 
@@ -14,3 +16,11 @@ typedef struct lbox {
 
 
 
+/* vim: set ts=8 sts=8 sw=8 noet: */
+/*
+ * Local Variables:
+ * mode: c
+ * c-basic-offset: 8
+ * fill-column: 78
+ * End:
+ */

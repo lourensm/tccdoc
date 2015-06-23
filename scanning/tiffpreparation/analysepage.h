@@ -1,7 +1,13 @@
-void setuppageareas(LActive_areasPtr* la,
-		    const char* filename, int width, int height,
-			      LScanOptions* options);
+/*
+ *  buf : so as to be able to do TIFFReadScanline(tif, buf, row, (tsample_t)0);
+ */
+typedef struct pagedata* PageDataPtr;
 
+PageDataPtr setuppageareas(LActive_areasPtr* la,
+		    const char* filename, TIFF* tif, unsigned char* buf,
+		    LScanOptions* options);
+
+void pageanalysis(PageDataPtr data);
 
 
 
