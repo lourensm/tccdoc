@@ -113,7 +113,7 @@ void setupprintareafromoptions(LActive_areasPtr* la, LScanOptions* options,
 	}
 	if (options->binall) {
 		LBox box = {0, 0, imagewidth, imageheight};
-		setupprintarea(la, &box, HEX);
+		setupprintarea(la, &box, BIN);
 	}
         
 }
