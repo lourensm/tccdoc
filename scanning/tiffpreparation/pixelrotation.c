@@ -13,19 +13,8 @@
 #include "tiffcommon.h"
 #include "activearea.h"
 #include "pixelrotation.h"
+#include "pixelrotationdev.h"
 
-typedef struct lpixelrotationdata {
-	LBox box, maxbox;
-	double max_atan_angle;
-	int lastpospos;
-	int* xvalues;
-	int* yvalues;
-	double x0, y0;
-	const char * filespec;
-	const char* resultdir;
-	const char* description;
-	double x1, y1, x2, y2;
-} LPixelrotationdata;
 
 /*
 need to partition space:
@@ -350,6 +339,19 @@ static void analysepixelrotationxy(const char* xory,
 	result->atanrotation = (p0- 100.0)*rdata->max_atan_angle/lastpospos;
 }
 
+/*
+ *    1:y - ylow  = - alpha*(x - xav)
+ *    2:x - xlow = alpha*(y - yav)
+ *    3:y - yhi  = - alpha*(x - xav)
+ *    4:x - xhi  = alpha*(y -yav)
+ *
+ *    tl=1&2: x = [xlow + alpha*(ylow + alpha*xav - yav)]/(1+alpha*alpha)
+ *    br=3&4: x = [xhi  + alpha*(yhi + alpha*xav - yav)]/(1+alpha*alpha)
+ *    tr=1&4: x = [xhi  + alpha*(ylow + alpha*xav - yav)]/(1+alpha*alpha)
+ *    bl=2&3: x = [xlow + alpha*(yhi + alpha*xav -yav)]/(1 + alpha*alpha)
+ * Would be nice if I had better intuition about symmetry.
+ * In practice our alpha is -alpha above.
+ */
  void   analysepixelrotation(void* data) {
 	LPixelrotationdata* rdata = (LPixelrotationdata*)data;
 	LBox * box = &(rdata->box);
@@ -360,21 +362,44 @@ static void analysepixelrotationxy(const char* xory,
 			       &xr);
 	double ylow = yr.zlow;
 	double xlow = xr.zlow;
+	rdata->xlow = xlow;
+	rdata->ylow = ylow;
 	double alpha = yr.atanrotation;
-	double y = box->y2 - box->y1;
-	double x = box->x2 - box->x1;
+	double yav = (box->y2 + box->y1)/2.0;
+	double xav = (box->x2 + box->x1)/2.0;
 
-	rdata->x1 = (xlow + alpha*(y/2 - ylow + alpha*x/2))/(1 + alpha*alpha);
-	rdata->y1 = ylow  - alpha*(x/2 - rdata->x1);
+	rdata->xtl = (xlow + alpha*(ylow - yav + alpha*xav))/(1 + alpha*alpha);
+	rdata->ytl = ylow  - alpha*(rdata->xtl - xav);
+	if (rdata->xtl < box->x1 || rdata->ytl < box->y1) {
+		printf("WARNING: top left beyond box limit: %lf,%lf <-> %d,%d\n",
+		       rdata->xtl, rdata->ytl, box->x1, box->y1);
+	}
 	printf("alpha:%lf, xlow:%lf, ylow:%lf\n", alpha, xlow, ylow);
-	printf("x1, y1:%lf,%lf\n", rdata->x1, rdata->y1);
+	printf("xtl, ytl:%lf,%lf\n", rdata->xtl, rdata->ytl);
 
 	double yhi = yr.zhi;
 	double xhi = xr.zhi;
-	rdata->x2 = (xhi + alpha*(y/2 - yhi + alpha*x/2))/(1 + alpha*alpha);
-	rdata->y2 = yhi  - alpha*(x/2 - rdata->x2);
+	rdata->xhi = xhi;
+	rdata->yhi = yhi;
+	rdata->xbr = (xhi + alpha*(yhi - yav +  alpha*xav))/(1 + alpha*alpha);
+	rdata->ybr = yhi  - alpha*(rdata->xbr - xav);
+	if (rdata->xbr > box->x2 || rdata->ybr > box->y2) {
+		printf("WARNING: bottom right beyond box limit: %lf,%lf <-> %d,%d\n",
+		       rdata->xbr, rdata->ybr, box->x2, box->y2);
+	}
 	printf("xhi:%lf, yhi:%lf\n", xhi, yhi);
-	printf("x2, y2:%lf,%lf\n", rdata->x2, rdata->y2);
+	printf("xbr, ybr:%lf,%lf\n", rdata->xbr, rdata->ybr);
+
+	rdata->xtr = (xhi + alpha*(ylow + alpha*xav - yav))/(1+alpha*alpha);
+	rdata->ytr = ylow - alpha*(rdata->xtr - xav);
+	printf("xtr, ytr:%lf,%lf\n", rdata->xtr, rdata->ytr);
+
+	rdata->xbl = (xlow + alpha*(yhi + alpha*xav - yav))/(1+alpha*alpha);
+	rdata->ybl = yhi - alpha*(rdata->xbl - xav);
+	printf("xbl, ybl:%lf,%lf\n", rdata->xbl, rdata->ybl);
+
+	rdata->alpha = alpha;
+	printf("-draw \"polygon %lf,%lf  %lf,%lf  %lf,%lf %lf,%lf\" -draw \"polygon %lf,%lf  %lf,%lf  %lf,%lf %lf,%lf\"\n", rdata->xtl, rdata->ytl, rdata->xtr, rdata->ytr, rdata->xbr, rdata->ybr, rdata->xbl, rdata->ybl);
 }
 
 

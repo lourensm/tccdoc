@@ -10,6 +10,7 @@
 #include "tiffcommon.h"
 #include "activearea.h"
 #include "pixelrotation.h"
+#include "pixelrotationdev.h"
 #include "lblobinfo.h"
 #include "analysepage.h"
 
@@ -86,6 +87,7 @@ typedef struct pagedata {
 	LArea* blobs;
 	LArea* lpageno;
 	LArea* rpageno;
+	uint32 width, height;
 } PageData;
 
 PageDataPtr setuppageareas(LActive_areasPtr* la, const char* filename,
@@ -162,13 +164,118 @@ PageDataPtr setuppageareas(LActive_areasPtr* la, const char* filename,
 		setupblobarea(blobprarea, boxrp, "rightpageno");
 	}
 	PageData pd = {filename, tif, buf, options, lefttext, righttext,
-		       blobarea, blobplarea, blobprarea};
+		       blobarea, blobplarea, blobprarea, width, height};
 	PageData* result = malloc(sizeof(PageData));
 	*result = pd;
 	return result;
 }
 
+
+/* 
+ * The left page: pageno starts at 195/235.5, size 3.5/235.5
+ * right page with two digits:ends 124/333 of its leftmargin. two digits are 
+ * 4.5/333 wide.
+ * Three digits is 7.
+ * First calculate the rotated box
+ */
+void printdrawbox(LBox* box) {
+	printf("-draw \"polygon %d,%d  %d,%d  %d,%d %d,%d\" ",
+	       box->x1, box->y1, box->x2, box->y1, box->x2, box->y2,
+	       box->x1, box->y2);	
+}
+void printdrawline(double x1,double y1,double x2,double y2) {
+	printf("-draw \"line %lf, %lf  %lf, %lf\" ",
+	       x1, y1, x2, y2);
+}
+void printdrawmidlines(LBox* box) {
+	double xav = (box->x1 + box->x2)/2;
+	printdrawline(xav, box->y1,xav, box->y2);
+	double yav = (box->y1 + box->y2)/2;
+	printdrawline(box->x1, yav, box->x2, yav);
+	       
+}
+void printdraw(LPixelrotationdata* ldata) {
+	printdrawbox(&(ldata->box));
+	printdrawmidlines(&(ldata->box));
+	return;
+	/* y - ylow = -alpha*(x - xav) 
+	 * x = x1, x = x2
+         * x - xlow = alpha*(y - yav)
+	 */
+	double xav = (ldata->box.x1 + ldata->box.x2)/2;
+	double y1 = ldata->ylow - ldata->alpha*(ldata->box.x1 - xav);
+	double y2 = ldata->ylow - ldata->alpha*(ldata->box.x2 - xav);
+	printdrawline(ldata->box.x1, y1, ldata->box.x2, y2);
+	double yh1 = ldata->yhi - ldata->alpha*(ldata->box.x1 - xav);
+	double yh2 = ldata->yhi - ldata->alpha*(ldata->box.x2 - xav);
+	printdrawline(ldata->box.x1, yh1, ldata->box.x2, yh2);
+
+	double yav = (ldata->box.y1 + ldata->box.y2)/2;
+	double x1 = ldata->xlow + ldata->alpha*(ldata->box.y1 - yav);
+	double x2 = ldata->xlow + ldata->alpha*(ldata->box.y2 - yav);
+	printdrawline(x1, ldata->box.y1, x2, ldata->box.y2);
+	double xh1 = ldata->xhi + ldata->alpha*(ldata->box.y1 - yav);
+	double xh2 = ldata->xhi + ldata->alpha*(ldata->box.y2 - yav);
+	printdrawline(xh1, ldata->box.y1, xh2, ldata->box.y2);
+	return;
+	printf("-draw \"polygon %lf,%lf  %lf,%lf  %lf,%lf %lf,%lf\" ",
+	       ldata->xtl, ldata->ytl, ldata->xtr, ldata->ytr, ldata->xbr,
+	       ldata->ybr, ldata->xbl, ldata->ybl);
+	
+}
+
+
+static void outtif(PageData* data) {
+
+	TIFF* tif = data->tif;
+	unsigned char* buf = data->buf;
+	TIFF *out = TIFFOpen("out.tiff", "w");
+	int sampleperpixel;
+	uint32 imagelength, imagewidth;
+	uint16 bitspersample;
+	TIFFGetField(tif, TIFFTAG_SAMPLESPERPIXEL, &sampleperpixel);
+	TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &imagewidth);
+	TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &imagelength);
+	TIFFGetField(tif, TIFFTAG_BITSPERSAMPLE, &bitspersample);
+	uint32 rowsperstrip;
+	TIFFGetField(tif, TIFFTAG_ROWSPERSTRIP, &rowsperstrip);
+	printf("ROWSPERSTRIP:%d\n", rowsperstrip);
+	short interpretation;
+	TIFFGetField(tif, TIFFTAG_PHOTOMETRIC, &interpretation);
+	static	uint16 compression;
+	TIFFGetField(tif, TIFFTAG_COMPRESSION, &compression);
+  
+	TIFFSetField(out, TIFFTAG_IMAGEWIDTH, imagewidth);
+	TIFFSetField(out, TIFFTAG_IMAGELENGTH, imagelength);
+	TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, sampleperpixel);
+	TIFFSetField(out, TIFFTAG_BITSPERSAMPLE, bitspersample);
+	TIFFSetField(out, TIFFTAG_ROWSPERSTRIP, rowsperstrip);
+        TIFFSetField(out, TIFFTAG_COMPRESSION, compression);
+	TIFFSetField(out, TIFFTAG_PHOTOMETRIC, interpretation);
+	TIFFSetupStrips(out);
+	uint32 scanlinesize = TIFFScanlineSize(tif);
+	for (uint32 col = 0; col < scanlinesize; col++) {
+		buf[col] = 0;
+	}
+	for (uint32 row = 0; row<imagelength;row++) {
+		if (TIFFWriteScanline(out, buf, row, 0)<0) {
+			ERROR_EXIT("problem with writescanline");
+		}
+		
+	}
+	TIFFClose(out);
+}
 void pageanalysis(PageDataPtr data) {
+	uint32 width = data->width, height = data->height;
+	/* find left box for pageno area */
+	LPixelrotationdata* ldata =(LPixelrotationdata*)(data->lefttext->data);
+	LPixelrotationdata* rdata =(LPixelrotationdata*)(data->righttext->data);
+	printf("\n\nDRAW:\n");
+	printf("convert o.tif -fill none -stroke black -strokewidth 10 ");
+	printdraw(ldata);
+	printdraw(rdata);
+	printf(" o1.tif\n");
+	outtif(data);
 	free(data);
 }
 

@@ -46,9 +46,9 @@
 # include <strings.h>
 #endif
 
-#ifdef HAVE_UNISTD_H
+
 # include <unistd.h>
-#endif
+
 
 #ifdef NEED_LIBPORT
 # include "libport.h"
@@ -57,7 +57,7 @@
 #include "tiffcommon.h"
 #include "analysescan.h"
 
-
+#include "ldraw.h"
 
 
 
@@ -103,13 +103,16 @@ main(int argc, char* argv[])
 	uint64 diroff = 0;
 	int chopstrips = 0;		/* disable strip chopping */
 
-	while ((c = getopt(argc, argv, "f:o:cdDSjilmrstuvwz0123456789")) != -1)
+	while ((c = getopt(argc, argv, "f:o:cdDSjilmrstTuvwz0123456789")) != -1)
 		switch (c) {
 		case '0': case '1': case '2': case '3':
 		case '4': case '5': case '6': case '7':
 		case '8': case '9':
 			dirnum = atoi(&argv[optind-1][1]);
 			break;
+		case 'T':
+			test_drawing("test.tif");
+			exit(10);
 		case 'd':
 			showdata++;
 			/* fall thru... */

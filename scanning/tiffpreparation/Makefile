@@ -9,8 +9,8 @@ help:
 clean:
 	rm -r *.o *~
 
-SOURCES=analysetiff.c analysescan.c lblobinfo.c pixelrotation.c analysepage.c lprintbox.c
-INCLUDES=analysescan.h tiffcommon.h lblobinfo.h pixelrotation.h analysepage.h analysescantests.c lprintbox.h
+SOURCES=analysetiff.c analysescan.c lblobinfo.c pixelrotation.c analysepage.c lprintbox.c ldraw.c
+INCLUDES=analysescan.h tiffcommon.h lblobinfo.h pixelrotation.h analysepage.h analysescantests.c lprintbox.h ldraw.h
 OBJECTS=$(SOURCES:%.c=%.o)
 
 
@@ -55,7 +55,12 @@ l:
 	splint +skip-sys-headers +boolint +matchanyintegral analysetiff.c
 
 
-TIFFFILE1=img016_r
+#TIFFFILE1=img016_r
+TIFFFILE1=img012_r
+
+rect:
+	convert $(TIFFSOURCEDIR1)/$(TIFFFILE1).tif -fill none -stroke black -strokewidth 10 -draw "polygon 7746, 990 12942,1002 12926,8524 7730,8512" -draw "polygon 1192,1026 5865,667 6445,8206 1772,8566" o1.tif 
+
 a:
 	$(MAKE) $(ANALYSETIFF)
 	./$(ANALYSETIFF) -t kin1.tif
@@ -68,6 +73,10 @@ s:
 	$(MAKE) $(ANALYSETIFF)
 	./$(ANALYSETIFF) -t square1.tif
 
+
+T:
+	$(MAKE) $(ANALYSETIFF)
+	./$(ANALYSETIFF) -T
 
 analyse:
 	$(MAKE) analyse.$(TIFFFILE1)
@@ -124,3 +133,19 @@ plotx.%:
 	#rm -f $(RESULTSDIR)/pixelrotationx_$*.eps
 	x=`expr $* + 100 + 2`;echo "set output \"$(RESULTSDIR)/pixelrotationx_$*.eps\";set terminal postscript color enhanced eps;plot [$(RANGEX)] \"$(DATAX)\" using 1:$$x title \"pixelrotation x $*\";quit" | gnuplot
 	open $(RESULTSDIR)/pixelrotationx_$*.eps
+
+
+t1:
+	convert -size 100x100 canvas: -monochrome -compress group4 c.tif
+	convert c.tif -fill none -stroke black -strokewidth 3 -draw "polygon 10,8 62, 8 62,85 10,85" c1.tif
+	open c1.tif
+
+
+t2:
+	convert -size 10000x5000 canvas: -monochrome -compress group4 c.tif
+	convert c.tif -fill none -stroke black -strokewidth 20 -draw "polygon 200,200 4800, 200 4800,4800 200,4800" c1.tif
+	open c1.tif
+
+t3:
+	convert -size 14000x10000 canvas: -monochrome -compress group4 c.tif
+	convert c.tif -fill none -stroke black -strokewidth 10 -draw "polygon 900,800  6000,800  6000,8000 900,8000" c1.tif

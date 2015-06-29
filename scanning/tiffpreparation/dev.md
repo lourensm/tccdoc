@@ -13,14 +13,32 @@
 * Details: How to define "blob' actions?
   
 
-TODO?
+TODO FIRST
+debug: img012_r.tif
+The rectangles do not fit correctly, see o1.tif
+Actions:
+1)measure xlo,xhi, ylo, yhi
+2)measure xtl,ytl  etc
+
+left rectangle?
+x1:973, y1:843, x2:6174, y2:8518   14039x9909  334mm x 236
+where is middle x: (6174 + 973)/2  x 334/14039 = 85.01 mm
+where is middle y: (8518 + 843)/2 x  236/9909 = 111.5 mm
+ylow = 175
+better: adjust polygon, draw x/2 y/2 and intersection
+
+try:
+-draw "polygon 1778.694932,704.989349  6452.062408,1064.345638  5872.322332,8603.766810 1198.954857,8244.410521" -draw "polygon 7730.105749,1001.598210  12926.081824,990.448595  12942.222587,8512.413960 7746.246512,8523.563575"
+
+first draw the intersections with the angles.
+
+
+
+Improve on surrounding box, by looking at details of yvalues,xvalues
 
 
 TODO: document the pixelrotationresults, start encoding the rotation, the
 box. (Use imagemagick convert).
-
-We need to have blobs available for the rotation detection later.
-So the setup of callbacks should be combined.
 
 Detect the pagenumbers and test whether their position is precise.
 Can we recognize, distinguish numbers?
@@ -37,19 +55,6 @@ Steps:
 
 0)define text rectangles,
 1)use imagemagick convert to add the boudary to the original tiff. 
-
-It looks relatively ok:
-with img016:
-y: 138-8034
-x:515 - 5684
-rotation: 0.1*97.9/100
-But: bit unclear: plot coordinates
-But: why is the y range so extended?
-
-Ok, got the rotation ok: see Makefile
-I can recognize lines in the text.
-First line starts at y =~65  linedistance is about 250
-
 
 
 Then, decide on where to place the pages, offset.
@@ -118,3 +123,13 @@ warn.
 Detect blobs in the expected place.
 
 
+Drawing line
+(x1,y1) - (x2,y2)
+width w:
+
+so, in direction 1,2 add w/2
+perpendicular, add w/2
+define x1,y1 corners:
+
+Draw lines:
+a bit more exploring

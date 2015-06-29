@@ -179,11 +179,11 @@ void analysescan(const char * fname, TIFF* tif, LScanOptions* options) {
 	setup_tiff_props(tif, options, &iheight, &iwidth, &scanlinesize,
 			 &invert_bits);
 	unsigned char* buf =
-		(unsigned char*)_TIFFmalloc(iheight*sizeof (unsigned char));
+		(unsigned char*)_TIFFmalloc(scanlinesize);
 	setupprintareafromoptions(&active_areas, options, iheight,iwidth);
  	PageDataPtr pdata =
 		setuppageareas(&active_areas, fname, tif, buf, options);
-
+	
 	int currenty = 0;
         for (uint32 row = 0; row < iheight; row++) {
 		tsize_t charstodo = scanlinesize, bitstodo = iwidth;
@@ -221,6 +221,7 @@ void analysescan(const char * fname, TIFF* tif, LScanOptions* options) {
 		currenty++;
 
 	}
+
 	LActive_areas* active_areas1 = active_areas;
 	while (active_areas1 != NULL) {
 		if (active_areas1->area.analyse != NULL) {
@@ -228,6 +229,7 @@ void analysescan(const char * fname, TIFF* tif, LScanOptions* options) {
 		}
 		active_areas1 = active_areas1->next;
 	}
+
 	pageanalysis(pdata);
 	while (active_areas != NULL) {
 		if (active_areas->area.free != NULL) {
