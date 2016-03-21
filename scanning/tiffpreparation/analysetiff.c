@@ -112,7 +112,7 @@ main(int argc, char* argv[])
 			break;
 		case 'T':
 			test_drawing("test.tif");
-			exit(10);
+			exit(0);
 		case 'd':
 			showdata++;
 			/* fall thru... */

@@ -23,8 +23,12 @@ adjust the detected textboudary, assuming that the pagenumbers are placed
 consistently.
 
 I am now exploring the possibility of detecting connected blobs in the
-image.
+image. 
 
-# Status
-
-The project is unfinished.
+ 
+# Status Mar 21 2016
+e
+Last work done Jul 21 2015. I remember that I was heavily disappointed because of some bug
+in the libtiff library. Drawing rectangles seemetd to go wrong. I seem to have been able to
+calculate a bounding box around text. The next step would have been to rotate pages and do some 
+rearranging so that all pages of the "13 treatises" book would align. And then perform OCR.
